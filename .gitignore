@@ -1,0 +1,9 @@
+node_modules
+apps/*/dist
+apps/*/node_modules
+coverage
+*.log
+.DS_Store
+*.sqlite
+apps/server/data/
+GeniusSend.zip
