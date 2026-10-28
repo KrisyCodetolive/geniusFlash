@@ -65,9 +65,9 @@ function createDeviceId() {
 const deviceId = localStorage.getItem(deviceIdStorageKey) || createDeviceId();
 localStorage.setItem(deviceIdStorageKey, deviceId);
 
-// Le navigateur utilise le même nom d’hôte que la page pour joindre le serveur du PC.
-// Ainsi, "localhost" fonctionne sur le PC et l’adresse IP locale fonctionne sur le téléphone.
-const signalingUrl = `${window.location.protocol}//${window.location.hostname}:3001`;
+// Le navigateur joint le serveur sur la même origine que la page : /socket.io est relayé
+// vers le serveur de signalisation par nginx en production et par Vite en développement.
+const signalingUrl = window.location.origin;
 
 const peerState = {
   id: '',

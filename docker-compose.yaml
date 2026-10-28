@@ -1,0 +1,31 @@
+# Déploiement complet : nginx (site + relais /socket.io) devant le serveur de signalisation.
+# Seul le service "web" doit recevoir un domaine ; "server" reste interne.
+services:
+  server:
+    build:
+      context: .
+      target: server
+    restart: unless-stopped
+    environment:
+      - PORT=3001
+      - GENIUSSEND_DB_PATH=/data/geniussend.sqlite
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}
+    volumes:
+      - geniussend-data:/data
+    expose:
+      - "3001"
+
+  web:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    depends_on:
+      - server
+    expose:
+      - "80"
+
+volumes:
+  geniussend-data:

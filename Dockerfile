@@ -43,5 +43,6 @@ CMD ["node", "apps/server/dist/index.js"]
 # The default final target is the static web application.
 FROM nginx:alpine AS web
 
+COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 EXPOSE 80
