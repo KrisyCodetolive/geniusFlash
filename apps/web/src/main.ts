@@ -149,7 +149,7 @@ app.innerHTML = `
           <span class="node-status">Recherche…</span>
         </div>
       </div>
-      <div class="radar-empty" id="radar-empty" hidden>
+      <div class="radar-empty" id="radar-empty">
         <div class="qr-code" id="qr-code"></div>
         <div class="empty-copy">
           <strong>Scannez pour connecter un appareil</strong>
@@ -271,7 +271,6 @@ const peerCount = document.querySelector('#peer-count') as HTMLSpanElement;
 const radar = document.querySelector('#radar') as HTMLDivElement;
 const selfName = document.querySelector('#self-name') as HTMLSpanElement;
 const radarSearching = document.querySelector('#radar-searching') as HTMLDivElement;
-const radarEmpty = document.querySelector('#radar-empty') as HTMLDivElement;
 const qrCode = document.querySelector('#qr-code') as HTMLDivElement;
 const shareUrl = document.querySelector('#share-url') as HTMLAnchorElement;
 const shareHint = document.querySelector('#share-hint') as HTMLParagraphElement;
@@ -884,12 +883,6 @@ function renderRadar() {
   peerCount.textContent = peers.length === 0
     ? 'Recherche d’appareils…'
     : `${peers.length} appareil${peers.length > 1 ? 's' : ''} connecté${peers.length > 1 ? 's' : ''}`;
-
-  const wasHidden = radarEmpty.hidden;
-  radarEmpty.hidden = peers.length > 0;
-  if (wasHidden && !radarEmpty.hidden) {
-    renderShareQr();
-  }
 
   if (peerState.selectedPeerId) {
     renderSheetHeader();
@@ -1673,5 +1666,7 @@ mobileLayout.addEventListener('change', () => {
 });
 
 renderDeviceIdentity();
+// Le QR code reste toujours visible : on peut connecter un nouvel appareil à tout moment.
+renderShareQr();
 peerState.socket = createClientSocket();
 renderRadar();
