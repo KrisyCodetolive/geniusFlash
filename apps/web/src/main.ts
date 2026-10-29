@@ -67,7 +67,8 @@ function generateDeviceName() {
 const detectedPlatform = detectPlatform();
 const isPhone = detectedPlatform === 'android' || detectedPlatform === 'ios';
 const deviceNameStorageKey = 'geniussend-device-name';
-const hiddenStorageKey = 'geniussend-hidden';
+// L’option « Masquer cet appareil » a été retirée : un appareil masqué auparavant redevient visible.
+localStorage.removeItem('geniussend-hidden');
 const defaultDeviceName = localStorage.getItem(deviceNameStorageKey) || generateDeviceName();
 localStorage.setItem(deviceNameStorageKey, defaultDeviceName);
 const deviceIdStorageKey = 'geniussend-device-id';
@@ -90,8 +91,7 @@ const peerState = {
   socket: null as Socket | null,
   selectedPeerId: '',
   manager: null as PeerConnectionManager | null,
-  deviceName: defaultDeviceName,
-  hidden: localStorage.getItem(hiddenStorageKey) === 'true'
+  deviceName: defaultDeviceName
 };
 
 function escapeHtml(value: string) {
@@ -121,6 +121,7 @@ app.innerHTML = `
         <span class="status-dot" aria-hidden="true"></span><span class="pill-label" id="server-status">Connexion…</span>
       </span>
       <span class="pill device-pill" title="Cet appareil">${platformIcon(detectedPlatform)}<span id="device-pill-label"></span></span>
+      <button class="icon-button" id="qr-button" type="button" aria-label="Afficher le QR code pour connecter un appareil" title="QR code">${icon('qr')}</button>
       <button class="icon-button install-button" id="install-button" type="button" aria-label="Installer l’application GeniusSend" title="Installer l’application" hidden>${icon('download')}</button>
       <button class="icon-button" id="profile-button" type="button" aria-label="Profil de cet appareil" title="Profil">${icon('user')}</button>
     </div>
@@ -149,14 +150,9 @@ app.innerHTML = `
           <span class="node-status">Recherche…</span>
         </div>
       </div>
-      <div class="radar-empty" id="radar-empty" hidden>
-        <div class="qr-code" id="qr-code"></div>
-        <div class="empty-copy">
-          <strong>Scannez pour connecter un appareil</strong>
-          <p>Ou ouvrez cette adresse sur un autre appareil du même Wi-Fi :</p>
-          <a class="share-url" id="share-url"></a>
-          <p class="field-help" id="share-hint" hidden>« localhost » ne fonctionne que sur ce PC : sur les autres appareils, utilisez son adresse IP.</p>
-        </div>
+      <div class="radar-hint" id="radar-hint" hidden>
+        <p>Aucun autre appareil pour l’instant.</p>
+        <button class="secondary-button small-button" id="radar-qr-button" type="button">${icon('qr')}Afficher le QR code</button>
       </div>
     </section>
 
@@ -196,12 +192,11 @@ app.innerHTML = `
         <button class="primary-button send-button" id="send-button" type="button" disabled>${icon('send')}<span id="send-label">Envoyer</span></button>
       </section>
 
-      <section class="panel recent-panel" aria-labelledby="recent-title">
+      <section class="panel recent-panel" id="recent-panel" aria-labelledby="recent-title" hidden>
         <div class="panel-heading">
           <h2 id="recent-title">Transferts récents</h2>
           <button class="text-button" id="clear-history" type="button" hidden>Tout effacer</button>
         </div>
-        <p class="recent-empty" id="recent-empty">Aucun transfert pour l’instant. Touchez un appareil sur le radar pour lui envoyer des fichiers ou du texte.</p>
         <ul class="recent-list" id="recent-list"></ul>
       </section>
     </aside>
@@ -211,12 +206,12 @@ app.innerHTML = `
     <div class="request-hero">
       <span class="request-icon">${icon('download')}</span>
       <div>
-        <p class="eyebrow">Fichier entrant</p>
+        <p class="eyebrow" id="request-kind">Fichier entrant</p>
         <h2 id="request-title"></h2>
       </div>
     </div>
     <div class="request-file">
-      <span class="request-file-icon">${icon('file')}</span>
+      <span class="request-file-icon" id="request-file-icon">${icon('file')}</span>
       <div>
         <strong id="request-file-name"></strong>
         <small id="request-file-size"></small>
@@ -240,14 +235,6 @@ app.innerHTML = `
       <input id="device-name" type="text" maxlength="40" placeholder="Ex. iPhone de Marie" />
       <label for="system-name">Système</label>
       <input id="system-name" type="text" readonly />
-      <label class="switch-row" for="hide-device">
-        <input id="hide-device" type="checkbox" />
-        <span class="switch" aria-hidden="true"></span>
-        <span>
-          <strong>Masquer cet appareil</strong>
-          <small>Il n’apparaîtra pas sur le radar des autres. Pratique pour le PC qui sert de serveur.</small>
-        </span>
-      </label>
       <div id="push-section" hidden>
         <button class="secondary-button" id="push-button" type="button" disabled>Notifications indisponibles</button>
         <p class="field-help" id="push-status">Les notifications signalent les demandes quand cet appareil est hors ligne.</p>
@@ -256,6 +243,17 @@ app.innerHTML = `
     <div class="dialog-actions">
       <button class="primary-button" id="save-profile" type="button">Enregistrer</button>
     </div>
+  </dialog>
+
+  <dialog class="modal qr-dialog" id="qr-dialog" aria-labelledby="qr-title">
+    <div class="modal-head">
+      <h2 id="qr-title">Connecter un appareil</h2>
+      <button class="icon-button small" type="button" aria-label="Fermer" data-close>${icon('close')}</button>
+    </div>
+    <div class="qr-code" id="qr-code"></div>
+    <p class="qr-caption">Scannez ce code avec un appareil connecté au même Wi-Fi, ou ouvrez cette adresse :</p>
+    <a class="share-url" id="share-url"></a>
+    <p class="field-help qr-caption" id="share-hint" hidden>« localhost » ne fonctionne que sur ce PC : sur les autres appareils, utilisez son adresse IP.</p>
   </dialog>
 
   <div class="toasts" id="toasts"></div>
@@ -271,7 +269,10 @@ const peerCount = document.querySelector('#peer-count') as HTMLSpanElement;
 const radar = document.querySelector('#radar') as HTMLDivElement;
 const selfName = document.querySelector('#self-name') as HTMLSpanElement;
 const radarSearching = document.querySelector('#radar-searching') as HTMLDivElement;
-const radarEmpty = document.querySelector('#radar-empty') as HTMLDivElement;
+const radarHint = document.querySelector('#radar-hint') as HTMLDivElement;
+const qrButton = document.querySelector('#qr-button') as HTMLButtonElement;
+const radarQrButton = document.querySelector('#radar-qr-button') as HTMLButtonElement;
+const qrDialog = document.querySelector('#qr-dialog') as HTMLDialogElement;
 const qrCode = document.querySelector('#qr-code') as HTMLDivElement;
 const shareUrl = document.querySelector('#share-url') as HTMLAnchorElement;
 const shareHint = document.querySelector('#share-hint') as HTMLParagraphElement;
@@ -294,10 +295,12 @@ const pasteTextBtn = document.querySelector('#paste-text') as HTMLButtonElement;
 const sendButton = document.querySelector('#send-button') as HTMLButtonElement;
 const sendLabel = document.querySelector('#send-label') as HTMLSpanElement;
 const recentList = document.querySelector('#recent-list') as HTMLUListElement;
-const recentEmpty = document.querySelector('#recent-empty') as HTMLParagraphElement;
+const recentPanel = document.querySelector('#recent-panel') as HTMLElement;
 const clearHistoryBtn = document.querySelector('#clear-history') as HTMLButtonElement;
 const requestDialog = document.querySelector('#request-dialog') as HTMLDialogElement;
 const requestTitle = document.querySelector('#request-title') as HTMLHeadingElement;
+const requestKind = document.querySelector('#request-kind') as HTMLParagraphElement;
+const requestFileIcon = document.querySelector('#request-file-icon') as HTMLSpanElement;
 const requestFileName = document.querySelector('#request-file-name') as HTMLElement;
 const requestFileSize = document.querySelector('#request-file-size') as HTMLElement;
 const requestCountdown = document.querySelector('#request-countdown') as HTMLParagraphElement;
@@ -307,7 +310,6 @@ const rejectTransferBtn = document.querySelector('#reject-transfer') as HTMLButt
 const profileDialog = document.querySelector('#profile-dialog') as HTMLDialogElement;
 const deviceNameInput = document.querySelector('#device-name') as HTMLInputElement;
 const systemNameInput = document.querySelector('#system-name') as HTMLInputElement;
-const hideDeviceInput = document.querySelector('#hide-device') as HTMLInputElement;
 const saveProfileBtn = document.querySelector('#save-profile') as HTMLButtonElement;
 const pushSection = document.querySelector('#push-section') as HTMLDivElement;
 const pushButton = document.querySelector('#push-button') as HTMLButtonElement;
@@ -448,7 +450,7 @@ function showToast({ title, message, tone = 'info', action }: ToastOptions) {
 
 function renderDeviceIdentity() {
   devicePillLabel.textContent = `${peerState.deviceName} · ${platformLabel[detectedPlatform] || 'Inconnu'}`;
-  selfName.textContent = peerState.hidden ? `${peerState.deviceName} (masqué)` : peerState.deviceName;
+  selfName.textContent = peerState.deviceName;
 }
 
 /* ---------- Presse-papiers, liens et téléchargements ---------- */
@@ -572,8 +574,11 @@ function updateEntry(id: string, patch: Partial<TransferEntry>) {
 }
 
 function entrySideLabel(entry: TransferEntry) {
-  if (entry.kind === 'text') {
-    if (entry.direction === 'received') return 'Reçu';
+  if (entry.kind === 'text' && entry.direction === 'received') {
+    return 'Reçu';
+  }
+
+  if (entry.kind === 'text' && entry.state === 'done') {
     return entry.delivered ? 'Remis ✓' : 'Envoyé';
   }
 
@@ -601,8 +606,8 @@ function entrySubLabel(entry: TransferEntry) {
   const peerName = getPeerDisplayName(entry.peerId);
   const route = entry.direction === 'sent' ? `Vers ${peerName}` : `De ${peerName}`;
 
-  if (entry.kind === 'text') {
-    return `${route} · ${formatTime(entry.time)}`;
+  if (entry.kind === 'text' && entry.state !== 'waiting') {
+    return entry.reason ? `${route} · ${entry.reason}` : `${route} · ${formatTime(entry.time)}`;
   }
 
   switch (entry.state) {
@@ -704,7 +709,11 @@ function renderEntry(entry: TransferEntry) {
   const actions = document.createElement('div');
   actions.className = 'recent-actions';
 
-  if (entry.kind === 'text' && entry.text !== undefined) {
+  if ((entry.state === 'waiting' || entry.state === 'active') && !entry.url) {
+    const cancelButton = createIconButton(entry.kind === 'text' ? 'Annuler l’envoi du texte' : 'Annuler ce transfert', 'close');
+    cancelButton.addEventListener('click', () => cancelEntry(entry));
+    actions.append(cancelButton);
+  } else if (entry.kind === 'text' && entry.text !== undefined) {
     const text = entry.text;
     const copyButton = createIconButton('Copier le texte', 'copy');
     copyButton.addEventListener('click', async () => {
@@ -717,10 +726,6 @@ function renderEntry(entry: TransferEntry) {
     const saveButton = createIconButton('Enregistrer le fichier', 'download');
     saveButton.addEventListener('click', () => downloadUrl(url, entry.fileName ?? 'fichier'));
     actions.append(saveButton);
-  } else if (entry.state === 'waiting' || entry.state === 'active') {
-    const cancelButton = createIconButton('Annuler ce transfert', 'close');
-    cancelButton.addEventListener('click', () => cancelEntry(entry));
-    actions.append(cancelButton);
   }
 
   item.append(visual, main, actions);
@@ -735,14 +740,15 @@ function renderEntry(entry: TransferEntry) {
 }
 
 function refreshRecentChrome() {
-  recentEmpty.hidden = entries.size > 0;
-  clearHistoryBtn.hidden = !Array.from(entries.values()).some((entry) => entry.kind === 'text' || finishedStates.includes(entry.state));
+  // Le panneau n’apparaît qu’à partir du premier transfert.
+  recentPanel.hidden = entries.size === 0;
+  clearHistoryBtn.hidden = !Array.from(entries.values()).some((entry) => finishedStates.includes(entry.state));
 }
 
 function clearHistory() {
   for (const entry of Array.from(entries.values())) {
     // Les transferts encore en cours restent visibles.
-    if (entry.kind === 'file' && !finishedStates.includes(entry.state)) continue;
+    if (!finishedStates.includes(entry.state)) continue;
     if (entry.url) URL.revokeObjectURL(entry.url);
     entryElements.get(entry.id)?.item.remove();
     entryElements.delete(entry.id);
@@ -885,11 +891,8 @@ function renderRadar() {
     ? 'Recherche d’appareils…'
     : `${peers.length} appareil${peers.length > 1 ? 's' : ''} connecté${peers.length > 1 ? 's' : ''}`;
 
-  const wasHidden = radarEmpty.hidden;
-  radarEmpty.hidden = peers.length > 0;
-  if (wasHidden && !radarEmpty.hidden) {
-    renderShareQr();
-  }
+  // Le QR code n’apparaît que sur demande : le radar vide propose seulement de l’afficher.
+  radarHint.hidden = peers.length > 0;
 
   if (peerState.selectedPeerId) {
     renderSheetHeader();
@@ -1079,7 +1082,7 @@ function adoptTransferId(transferId: string) {
 /* ---------- Demandes reçues ---------- */
 
 type TransferRequestInfo = { transferId: string; fileName: string; fileSize: number; expiresInMs: number; mimeType?: string; senderName?: string; expiresAt?: number };
-type PendingRequest = { peerId: string; transfer: TransferRequestInfo; offline: boolean; expiresAt: number };
+type PendingRequest = { kind: 'file' | 'text'; peerId: string; transfer: TransferRequestInfo; offline: boolean; expiresAt: number };
 const requestQueue: PendingRequest[] = [];
 let activeRequest: PendingRequest | null = null;
 
@@ -1096,20 +1099,32 @@ function renderNextTransferRequest() {
     return;
   }
 
-  const { peerId, transfer } = activeRequest;
-  requestTitle.textContent = `${transfer.senderName || getPeerDisplayName(peerId)} veut vous envoyer un fichier`;
-  requestFileName.textContent = transfer.fileName;
-  requestFileSize.textContent = formatBytes(transfer.fileSize);
+  const { kind, peerId, transfer } = activeRequest;
+  const senderName = transfer.senderName || getPeerDisplayName(peerId);
+  // Pour un texte, seule sa longueur est connue : le contenu n’arrive qu’après acceptation.
+  if (kind === 'text') {
+    requestKind.textContent = 'Texte entrant';
+    requestTitle.textContent = `${senderName} veut vous envoyer un texte`;
+    requestFileIcon.innerHTML = icon('text');
+    requestFileName.textContent = 'Texte';
+    requestFileSize.textContent = `${transfer.fileSize} caractère${transfer.fileSize > 1 ? 's' : ''}`;
+  } else {
+    requestKind.textContent = 'Fichier entrant';
+    requestTitle.textContent = `${senderName} veut vous envoyer un fichier`;
+    requestFileIcon.innerHTML = icon('file');
+    requestFileName.textContent = transfer.fileName;
+    requestFileSize.textContent = formatBytes(transfer.fileSize);
+  }
   requestQueueInfo.hidden = requestQueue.length === 0;
   requestQueueInfo.textContent = `${requestQueue.length} autre${requestQueue.length > 1 ? 's' : ''} demande${requestQueue.length > 1 ? 's' : ''} en attente`;
   renderRequestCountdown();
   if (!requestDialog.open) requestDialog.showModal();
 }
 
-function showTransferRequest(peerId: string, transfer: TransferRequestInfo, offline = false) {
+function showTransferRequest(peerId: string, transfer: TransferRequestInfo, offline = false, kind: 'file' | 'text' = 'file') {
   if (activeRequest?.transfer.transferId === transfer.transferId || requestQueue.some((entry) => entry.transfer.transferId === transfer.transferId)) return;
   const expiresAt = transfer.expiresAt ?? Date.now() + transfer.expiresInMs;
-  requestQueue.push({ peerId, transfer, offline, expiresAt });
+  requestQueue.push({ kind, peerId, transfer, offline, expiresAt });
   renderNextTransferRequest();
 }
 
@@ -1127,8 +1142,19 @@ function removeTransferRequest(transferId: string) {
 function answerRequest(accepted: boolean) {
   const request = activeRequest;
   if (!request) return;
-  const { peerId, transfer, offline } = request;
+  const { kind, peerId, transfer, offline } = request;
   activeRequest = null;
+
+  if (kind === 'text') {
+    if (accepted) {
+      peerState.manager?.acceptText(peerId, transfer.transferId);
+    } else {
+      peerState.manager?.rejectText(peerId, transfer.transferId);
+      showTemporaryTransferStatus('Texte refusé', 5_000);
+    }
+    renderNextTransferRequest();
+    return;
+  }
 
   if (accepted) {
     // La ligne existe avant le premier événement de progression.
@@ -1257,6 +1283,12 @@ function createManager(socket: Socket) {
         showToast({ message: `${getPeerDisplayName(peerId)} a refusé le fichier`, tone: 'error' });
       }
     },
+    onTextRequest: (peerId, request) => {
+      showTransferRequest(peerId, { transferId: request.messageId, fileName: 'Texte', fileSize: request.length, expiresInMs: request.expiresInMs }, false, 'text');
+    },
+    onTextPending: ({ peerId, messageId, text, expiresInMs }) => {
+      upsertEntry({ id: messageId, kind: 'text', direction: 'sent', peerId, text, state: 'waiting', expiresAt: Date.now() + expiresInMs });
+    },
     onTextReceived: (peerId, text) => {
       upsertEntry({ id: `text-${Date.now()}-${Math.random().toString(36).slice(2)}`, kind: 'text', direction: 'received', peerId, text, state: 'done' });
       showToast({ message: `Nouveau texte de ${getPeerDisplayName(peerId)}`, tone: 'info' });
@@ -1294,8 +1326,7 @@ function registerLocalPeer(socket: Socket) {
     id: deviceId,
     name: peerState.deviceName,
     platform: detectedPlatform,
-    status: 'online',
-    hidden: peerState.hidden
+    status: 'online'
   });
 }
 
@@ -1431,17 +1462,34 @@ async function sendCurrentText(targetPeerId: string) {
   const text = textInput.value;
   if (!text.trim() || !peerState.manager) return;
 
-  sendButton.disabled = true;
+  // La demande part tout de suite ; la réponse du destinataire arrive plus tard dans « Transferts récents ».
+  textInput.value = '';
+  updateSendButton();
+  if (mobileLayout.matches) closeSheet();
+
   try {
-    const messageId = await peerState.manager.sendText(targetPeerId, text);
-    upsertEntry({ id: messageId, kind: 'text', direction: 'sent', peerId: targetPeerId, text, state: 'done' });
-    textInput.value = '';
-    if (mobileLayout.matches) closeSheet();
+    const { messageId, outcome } = await peerState.manager.sendText(targetPeerId, text);
+    const peerName = getPeerDisplayName(targetPeerId);
+    if (outcome === 'accepted') {
+      updateEntry(messageId, { state: 'done', time: new Date(), expiresAt: undefined });
+    } else if (outcome === 'refused') {
+      updateEntry(messageId, { state: 'refused', expiresAt: undefined });
+      showToast({ message: `${peerName} a refusé le texte`, tone: 'error' });
+    } else if (outcome === 'expired') {
+      updateEntry(messageId, { state: 'expired', reason: 'pas de réponse à temps', expiresAt: undefined });
+    } else if (outcome === 'cancelled') {
+      updateEntry(messageId, { state: 'cancelled', expiresAt: undefined });
+    } else {
+      updateEntry(messageId, { state: 'failed', reason: 'connexion perdue', expiresAt: undefined });
+    }
   } catch (error) {
+    // Rien n’est parti : on rend le texte pour ne pas le perdre.
     console.error('[GeniusSend] échec de l’envoi du texte', error);
+    if (!textInput.value) {
+      textInput.value = text;
+      updateSendButton();
+    }
     showToast({ message: error instanceof Error ? error.message : 'Échec de l’envoi du texte', tone: 'error' });
-  } finally {
-    updateSendButton();
   }
 }
 
@@ -1489,7 +1537,7 @@ for (const tab of [tabFiles, tabText]) {
 }
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && sendSheet.dataset.open === 'true' && !requestDialog.open && !profileDialog.open) {
+  if (event.key === 'Escape' && sendSheet.dataset.open === 'true' && !requestDialog.open && !profileDialog.open && !qrDialog.open) {
     closeSheet();
   }
 });
@@ -1598,30 +1646,39 @@ requestDialog.addEventListener('cancel', (event) => event.preventDefault());
 function openProfile() {
   deviceNameInput.value = peerState.deviceName;
   systemNameInput.value = platformLabel[detectedPlatform] || 'Inconnu';
-  hideDeviceInput.checked = peerState.hidden;
   profileDialog.showModal();
 }
 
 profileButton.addEventListener('click', openProfile);
-profileDialog.addEventListener('click', (event) => {
-  const target = event.target as HTMLElement;
-  if (target === profileDialog || target.closest('[data-close]')) {
-    profileDialog.close();
-  }
-});
+
+function openQrDialog() {
+  renderShareQr();
+  qrDialog.showModal();
+}
+
+qrButton.addEventListener('click', openQrDialog);
+radarQrButton.addEventListener('click', openQrDialog);
+
+// Un clic sur le fond ou sur ✕ ferme le profil et la fenêtre du QR code.
+for (const dialog of [profileDialog, qrDialog]) {
+  dialog.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    if (target === dialog || target.closest('[data-close]')) {
+      dialog.close();
+    }
+  });
+}
 
 saveProfileBtn.addEventListener('click', () => {
   const name = deviceNameInput.value.trim() || peerState.deviceName;
   peerState.deviceName = name;
-  peerState.hidden = hideDeviceInput.checked;
   localStorage.setItem(deviceNameStorageKey, name);
-  localStorage.setItem(hiddenStorageKey, String(peerState.hidden));
   renderDeviceIdentity();
   if (peerState.socket?.connected) {
     registerLocalPeer(peerState.socket);
   }
   profileDialog.close();
-  showToast({ message: peerState.hidden ? 'Profil enregistré · cet appareil est masqué' : 'Profil enregistré', tone: 'success' });
+  showToast({ message: 'Profil enregistré', tone: 'success' });
 });
 
 function decodeVapidKey(value: string) {

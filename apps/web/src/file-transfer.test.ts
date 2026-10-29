@@ -77,6 +77,8 @@ describe('file transfer protocol', () => {
   it('should preserve shared text exactly, including line breaks and accents', () => {
     const protocol = new FileTransferProtocol();
     const messages = [
+      { type: 'text-offer', messageId: 'text-1', length: 42 },
+      { type: 'text-response', messageId: 'text-1', accepted: true },
       { type: 'text', messageId: 'text-1', text: 'Bonjour 👋\nLigne 2 : « éàç » <b>pas du HTML</b>' },
       { type: 'text-ack', messageId: 'text-1' }
     ];

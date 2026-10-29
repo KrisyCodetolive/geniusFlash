@@ -20,7 +20,8 @@ const paths = {
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/>',
   arrowOut: '<path d="M7 17 17 7M8.5 7H17v8.5"/>',
   arrowIn: '<path d="M17 7 7 17M15.5 17H7V8.5"/>',
-  clipboard: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1"/>'
+  clipboard: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1"/>',
+  qr: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.2"/><path d="M14 14h2.5v2.5H14zM18 18h2.5v2.5H18zM14 19.5V20.5M19.5 14h1"/>'
 } as const;
 
 export type IconName = keyof typeof paths;

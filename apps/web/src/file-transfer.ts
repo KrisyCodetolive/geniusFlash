@@ -55,6 +55,17 @@ export type TransferMessage =
       chunkIndex: number;
     }
   | {
+      // Demande préalable : le contenu du texte ne part qu’après acceptation.
+      type: 'text-offer';
+      messageId: string;
+      length: number;
+    }
+  | {
+      type: 'text-response';
+      messageId: string;
+      accepted: boolean;
+    }
+  | {
       type: 'text';
       messageId: string;
       text: string;
