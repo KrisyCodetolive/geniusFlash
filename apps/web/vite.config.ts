@@ -1,10 +1,13 @@
 import { defineConfig } from 'vite';
 
-// Relaie le WebSocket vers le serveur de signalisation, comme nginx en production.
+// Relaie le WebSocket et les fichiers du chat vers le serveur, comme nginx en production.
 const signalingProxy = {
   '/socket.io': {
     target: 'http://localhost:3001',
     ws: true
+  },
+  '/chat': {
+    target: 'http://localhost:3001'
   }
 };
 

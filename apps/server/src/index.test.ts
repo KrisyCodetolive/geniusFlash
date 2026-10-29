@@ -139,6 +139,54 @@ describe('signal server', () => {
     expect((await list).find((peer) => peer.id === 'device-b')?.hidden).toBe(true);
   });
 
+  it('broadcasts chat messages and replays them as history', async () => {
+    const received = new Promise<{ text: string; authorName: string; kind: string }>((resolve) => clientB.once('chat:message', resolve));
+    clientA.emit('chat:send', { text: '  Bonjour tout le monde  ' });
+    expect(await received).toMatchObject({ kind: 'text', text: 'Bonjour tout le monde', authorName: 'Android-A' });
+
+    const history = new Promise<Array<{ text?: string }>>((resolve) => clientB.once('chat:history', resolve));
+    clientB.emit('peer:register', { id: 'device-b', name: 'iPhone-B', platform: 'ios' });
+    expect((await history).some((message) => message.text === 'Bonjour tout le monde')).toBe(true);
+  });
+
+  it('stores chat attachments for everyone and never serves them as a web page', async () => {
+    const port = (server.httpServer.address() as { port: number }).port;
+    const announced = new Promise<{ file: { id: string; name: string; size: number } }>((resolve) => clientB.once('chat:message', resolve));
+    const upload = await fetch(`http://localhost:${port}/chat/files`, {
+      method: 'POST',
+      headers: { 'X-Device-Id': 'device-a', 'X-File-Name': encodeURIComponent('photo été.png'), 'Content-Type': 'image/png' },
+      body: Buffer.from('fake-png-bytes')
+    });
+    expect(upload.status).toBe(201);
+    const { file } = await announced;
+    expect(file).toMatchObject({ name: 'photo été.png', size: 14 });
+
+    const inline = await fetch(`http://localhost:${port}/chat/files/${file.id}`);
+    expect(inline.headers.get('content-type')).toBe('image/png');
+    expect(await inline.text()).toBe('fake-png-bytes');
+    const forced = await fetch(`http://localhost:${port}/chat/files/${file.id}?download=1`);
+    expect(forced.headers.get('content-disposition')).toContain('attachment');
+    await forced.arrayBuffer();
+
+    const pageUpload = await fetch(`http://localhost:${port}/chat/files`, {
+      method: 'POST',
+      headers: { 'X-Device-Id': 'device-a', 'X-File-Name': 'page.html', 'Content-Type': 'text/html' },
+      body: '<script>alert(1)</script>'
+    });
+    const page = (await pageUpload.json()) as { file: { id: string } };
+    const served = await fetch(`http://localhost:${port}/chat/files/${page.file.id}`);
+    expect(served.headers.get('content-type')).toBe('application/octet-stream');
+    expect(served.headers.get('content-disposition')).toContain('attachment');
+    await served.arrayBuffer();
+
+    const stranger = await fetch(`http://localhost:${port}/chat/files`, {
+      method: 'POST',
+      headers: { 'X-Device-Id': 'unknown-device', 'X-File-Name': 'x.txt' },
+      body: 'x'
+    });
+    expect(stranger.status).toBe(403);
+  });
+
   it('warns a tab before another tab of the same device replaces it', async () => {
     const port = (server.httpServer.address() as { port: number }).port;
     const clientC = createClient(`http://localhost:${port}`, { transports: ['websocket'] });

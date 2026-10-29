@@ -20,6 +20,9 @@
   --danger-soft: rgba(248, 113, 113, 0.14);
   --ring: rgba(148, 163, 184, 0.14);
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  --bubble-mine: #075985;
+  --bubble-mine-text: #e0f2fe;
+  --chat-bg: #0a101c;
   --mono: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
 }
 
@@ -45,6 +48,9 @@
     --danger-soft: rgba(220, 38, 38, 0.08);
     --ring: rgba(15, 23, 42, 0.1);
     --shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+    --bubble-mine: #d4eefb;
+    --bubble-mine-text: #0f172a;
+    --chat-bg: #f1f5f9;
   }
 }
 
@@ -293,12 +299,18 @@ h1 {
   align-items: start;
 }
 
-/* Rien à droite (aucun appareil choisi, aucun transfert) : le radar prend toute la largeur. */
-.layout:has(.sheet[data-open='false']):has(.recent-panel[hidden]) {
+/* Rien à droite (aucun appareil choisi, aucun transfert, chat fermé) : le radar prend toute la largeur. */
+.layout:has(.sheet[data-open='false']):has(.recent-panel[hidden]):has(.chat-panel[data-open='false']) {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.layout:has(.sheet[data-open='false']):has(.recent-panel[hidden]) .side-column {
+.layout:has(.sheet[data-open='false']):has(.recent-panel[hidden]):has(.chat-panel[data-open='false']) .side-column {
+  display: none;
+}
+
+/* Le chat ouvert remplace le volet d’envoi et les transferts récents dans la colonne de droite. */
+.layout.chat-open .side-column > .sheet,
+.layout.chat-open .side-column > .recent-panel {
   display: none;
 }
 
@@ -665,38 +677,7 @@ h1 {
   display: none;
 }
 
-/* Onglets Fichiers / Texte façon contrôle segmenté. */
-.tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel-soft);
-}
-
-.tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--muted);
-  font-weight: 600;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.tab[aria-selected='true'] {
-  background: var(--panel);
-  color: var(--accent);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
-}
-
-.tab-panel {
+.sheet-files {
   display: grid;
   gap: 12px;
 }
@@ -773,35 +754,6 @@ h1 {
 
 .selected-file-icon {
   color: var(--accent);
-}
-
-.tab-panel textarea {
-  width: 100%;
-  min-height: 150px;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 14px;
-  background: var(--panel-soft);
-  color: var(--text);
-  font: inherit;
-}
-
-.tab-panel textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.text-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.text-hint {
-  color: var(--muted);
-  font-size: 0.8rem;
 }
 
 .send-button {
@@ -948,20 +900,6 @@ h1 {
   gap: 6px;
 }
 
-.text-content {
-  margin: 2px 0 0;
-  max-height: 150px;
-  overflow-y: auto;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--panel-soft);
-  font-size: 0.88rem;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-/* ---------- Boutons ---------- */
 
 .primary-button,
 .secondary-button {
@@ -1327,6 +1265,356 @@ h1 {
   color: var(--accent);
 }
 
+/* ---------- Chat ---------- */
+
+.chat-button {
+  position: relative;
+}
+
+.chat-button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chat-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border: 2px solid var(--bg);
+  border-radius: 999px;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 140px);
+  min-height: 460px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.chat-panel[data-open='false'] {
+  display: none;
+}
+
+.chat-panel[data-open='true'] {
+  animation: sheet-in-right 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.chat-panel.dragging {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-header-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chat-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-title h2 {
+  font-size: 1.05rem;
+}
+
+.chat-presence {
+  margin: 2px 0 0;
+  color: var(--success);
+  font-size: 0.78rem;
+}
+
+.chat-messages {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 14px 18px;
+  overflow-y: auto;
+  background: var(--chat-bg);
+  overscroll-behavior: contain;
+}
+
+.chat-empty {
+  margin: auto;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.chat-day {
+  align-self: center;
+  margin: 12px 0 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.chat-day::first-letter {
+  text-transform: uppercase;
+}
+
+.chat-row {
+  display: flex;
+}
+
+.chat-row.mine {
+  justify-content: flex-end;
+}
+
+.chat-row.group-start {
+  margin-top: 8px;
+}
+
+.chat-bubble {
+  max-width: 80%;
+  padding: 7px 10px 5px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.chat-row.mine .chat-bubble {
+  border-color: transparent;
+  background: var(--bubble-mine);
+  color: var(--bubble-mine-text);
+}
+
+/* La première bulle d’un groupe a un coin pointu, comme une queue de bulle. */
+.chat-row.theirs.group-start .chat-bubble {
+  border-top-left-radius: 4px;
+}
+
+.chat-row.mine.group-start .chat-bubble {
+  border-top-right-radius: 4px;
+}
+
+.chat-author {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.chat-text {
+  margin: 0;
+  font-size: 0.93rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-text a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.chat-time {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.68rem;
+  opacity: 0.65;
+  text-align: right;
+}
+
+.chat-file {
+  display: grid;
+  gap: 6px;
+  min-width: min(230px, 60vw);
+}
+
+.chat-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.chat-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px 2px;
+}
+
+.chat-file-row div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-file-row strong {
+  overflow: hidden;
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-file-row small {
+  opacity: 0.7;
+}
+
+.chat-file-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chat-row.mine .chat-file-icon {
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+}
+
+.chat-download {
+  color: inherit;
+  text-decoration: none;
+}
+
+.chat-uploads {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-uploads li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-uploads li div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-uploads strong {
+  overflow: hidden;
+  font-size: 0.85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-uploads progress {
+  width: 100%;
+  height: 4px;
+  border: none;
+  border-radius: 999px;
+  overflow: hidden;
+  appearance: none;
+  background: var(--panel-soft);
+}
+
+.chat-uploads progress::-webkit-progress-bar {
+  background: var(--panel-soft);
+}
+
+.chat-uploads progress::-webkit-progress-value {
+  background: var(--accent);
+}
+
+.chat-uploads progress::-moz-progress-bar {
+  background: var(--accent);
+}
+
+.chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.chat-composer textarea {
+  flex: 1;
+  min-height: 42px;
+  max-height: 132px;
+  resize: none;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 21px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.93rem;
+  line-height: 1.4;
+}
+
+.chat-composer textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.chat-attach {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+}
+
+.chat-send {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.chat-send:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.chat-send:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 /* ---------- Tablette et téléphone ---------- */
 
 @media (max-width: 899px) {
@@ -1465,6 +1753,34 @@ h1 {
     bottom: calc(16px + env(safe-area-inset-bottom));
     width: auto;
   }
+
+  /* Sur téléphone, le chat s’ouvre en plein écran, comme une conversation WhatsApp. */
+  .chat-panel[data-open='true'] {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    height: 100vh;
+    height: 100dvh;
+    border: none;
+    border-radius: 0;
+    animation: sheet-in-up 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .chat-header {
+    padding-top: calc(14px + env(safe-area-inset-top));
+  }
+
+  .chat-composer {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .chat-bubble {
+    max-width: 86%;
+  }
+}
+
+body.chat-locked {
+  overflow: hidden;
 }
 
 @keyframes fade-in {
@@ -1511,10 +1827,6 @@ h1 {
   .peer-count {
     margin-top: 2px;
   }
-
-  .text-hint {
-    display: none;
-  }
 }
 
 /* Très petit écran : le logo seul suffit, les boutons de l’en-tête gardent leur place. */
@@ -1525,13 +1837,6 @@ h1 {
     height: 1px;
     overflow: hidden;
     clip: rect(0 0 0 0);
-  }
-}
-
-/* Les astuces clavier n’ont pas de sens sur écran tactile. */
-@media (pointer: coarse) {
-  .text-hint {
-    display: none;
   }
 }
 

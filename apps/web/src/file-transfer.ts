@@ -5,8 +5,6 @@ export const CHUNK_SIZE_BYTES = 64 * 1024;
 export const TRANSFER_ACK_WINDOW = 8;
 export const TRANSFER_ACCEPT_TIMEOUT_MS = 3 * 60 * 1000;
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 ** 3;
-// Un texte part en un seul message : on reste sous la taille maximale des messages WebRTC mobiles.
-export const MAX_TEXT_BYTES = 60 * 1024;
 
 export type TransferMessage =
   | {
@@ -53,26 +51,6 @@ export type TransferMessage =
       type: 'chunk-ack';
       transferId: string;
       chunkIndex: number;
-    }
-  | {
-      // Demande préalable : le contenu du texte ne part qu’après acceptation.
-      type: 'text-offer';
-      messageId: string;
-      length: number;
-    }
-  | {
-      type: 'text-response';
-      messageId: string;
-      accepted: boolean;
-    }
-  | {
-      type: 'text';
-      messageId: string;
-      text: string;
-    }
-  | {
-      type: 'text-ack';
-      messageId: string;
     };
 
 export function toHex(bytes: Uint8Array) {

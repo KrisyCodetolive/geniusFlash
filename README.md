@@ -12,6 +12,14 @@ GeniusSend est une application de transfert de fichiers conçue pour échanger d
 
 Par défaut, le serveur enregistre les appareils dans SQLite, dans `apps/server/data/geniussend.sqlite`. Définissez `GENIUSSEND_DB_PATH` pour placer la base de données dans un répertoire persistant de l’hôte. Le serveur nécessite Node.js 22.13 ou une version ultérieure.
 
+### Chat en direct
+
+Tous les appareils connectés partagent un salon de discussion unique. Contrairement aux transferts directs (qui passent d’un appareil à l’autre sans jamais être stockés), les messages et les fichiers du chat transitent par le serveur afin d’être visibles par tous, y compris par les appareils qui arrivent plus tard :
+
+- les messages et les fichiers sont conservés **24 heures**, puis supprimés automatiquement ;
+- à l’arrivée, un appareil reçoit les **200 derniers messages** ;
+- un fichier du chat pèse au maximum **100 Mo** ; il est enregistré dans le dossier `chat-files`, à côté de la base SQLite (donc dans le volume `/data` en Docker).
+
 ### Demandes de transfert hors ligne et notifications Push
 
 Une demande hors ligne ne stocke que les métadonnées du fichier sur le serveur. Le fichier lui-même reste dans l’onglet du navigateur de l’expéditeur. Celui-ci doit garder GeniusSend ouvert et connecté jusqu’à l’acceptation du destinataire. Si la page est fermée ou si sa connexion au serveur est perdue, la demande est annulée. Après acceptation, les appareils établissent une connexion WebRTC et le transfert du fichier commence.

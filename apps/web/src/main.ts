@@ -1,6 +1,8 @@
 import './styles.css';
 import qrcode from 'qrcode-generator';
 import { io, type Socket } from 'socket.io-client';
+import { createChat } from './chat';
+import { formatBytes, formatTime } from './format';
 import { icon, platformIcon } from './icons';
 import { isIosDevice, setupInstall } from './install';
 import { PeerConnectionManager, type TransferProgress, type TransferResult } from './webrtc';
@@ -121,6 +123,7 @@ app.innerHTML = `
         <span class="status-dot" aria-hidden="true"></span><span class="pill-label" id="server-status">Connexion…</span>
       </span>
       <span class="pill device-pill" title="Cet appareil">${platformIcon(detectedPlatform)}<span id="device-pill-label"></span></span>
+      <button class="icon-button chat-button" id="chat-button" type="button" aria-label="Ouvrir le chat" aria-pressed="false" title="Chat">${icon('chat')}<span class="chat-badge" id="chat-badge" hidden></span></button>
       <button class="icon-button" id="qr-button" type="button" aria-label="Afficher le QR code pour connecter un appareil" title="QR code">${icon('qr')}</button>
       <button class="icon-button install-button" id="install-button" type="button" aria-label="Installer l’application GeniusSend" title="Installer l’application" hidden>${icon('download')}</button>
       <button class="icon-button" id="profile-button" type="button" aria-label="Profil de cet appareil" title="Profil">${icon('user')}</button>
@@ -169,11 +172,7 @@ app.innerHTML = `
           <span class="mono sheet-platform" id="sheet-platform"></span>
           <button class="icon-button small" id="close-sheet" type="button" aria-label="Fermer">${icon('close')}</button>
         </div>
-        <div class="tabs" role="tablist" aria-label="Type d’envoi">
-          <button class="tab" id="tab-files" type="button" role="tab" aria-selected="true" aria-controls="panel-files">${icon('file')}Fichiers</button>
-          <button class="tab" id="tab-text" type="button" role="tab" aria-selected="false" aria-controls="panel-text" tabindex="-1">${icon('text')}Texte</button>
-        </div>
-        <div class="tab-panel" id="panel-files" role="tabpanel" aria-labelledby="tab-files">
+        <div class="sheet-files">
           <button class="dropzone" id="dropzone" type="button">
             <span class="dropzone-icon">${icon('upload')}</span>
             <strong>Glissez vos fichiers ici</strong>
@@ -181,13 +180,6 @@ app.innerHTML = `
           </button>
           <input id="file-input" type="file" multiple hidden />
           <ul class="selected-files" id="selected-files"></ul>
-        </div>
-        <div class="tab-panel" id="panel-text" role="tabpanel" aria-labelledby="tab-text" hidden>
-          <textarea id="text-input" rows="6" placeholder="Saisissez ou collez un texte, un lien, un code…"></textarea>
-          <div class="text-tools">
-            <span class="text-hint">Ctrl + Entrée pour envoyer</span>
-            <button class="secondary-button small-button" id="paste-text" type="button" hidden>${icon('clipboard')}Coller</button>
-          </div>
         </div>
         <button class="primary-button send-button" id="send-button" type="button" disabled>${icon('send')}<span id="send-label">Envoyer</span></button>
       </section>
@@ -199,6 +191,8 @@ app.innerHTML = `
         </div>
         <ul class="recent-list" id="recent-list"></ul>
       </section>
+
+      <section class="panel chat-panel" id="chat-panel" data-open="false" aria-label="Chat"></section>
     </aside>
   </main>
 
@@ -283,15 +277,9 @@ const sheetDeviceIcon = document.querySelector('#sheet-device-icon') as HTMLSpan
 const sheetTitle = document.querySelector('#sheet-title') as HTMLHeadingElement;
 const sheetPlatform = document.querySelector('#sheet-platform') as HTMLSpanElement;
 const closeSheetBtn = document.querySelector('#close-sheet') as HTMLButtonElement;
-const tabFiles = document.querySelector('#tab-files') as HTMLButtonElement;
-const tabText = document.querySelector('#tab-text') as HTMLButtonElement;
-const panelFiles = document.querySelector('#panel-files') as HTMLDivElement;
-const panelText = document.querySelector('#panel-text') as HTMLDivElement;
 const dropzone = document.querySelector('#dropzone') as HTMLButtonElement;
 const fileInput = document.querySelector('#file-input') as HTMLInputElement;
 const selectedFilesList = document.querySelector('#selected-files') as HTMLUListElement;
-const textInput = document.querySelector('#text-input') as HTMLTextAreaElement;
-const pasteTextBtn = document.querySelector('#paste-text') as HTMLButtonElement;
 const sendButton = document.querySelector('#send-button') as HTMLButtonElement;
 const sendLabel = document.querySelector('#send-label') as HTMLSpanElement;
 const recentList = document.querySelector('#recent-list') as HTMLUListElement;
@@ -299,8 +287,6 @@ const recentPanel = document.querySelector('#recent-panel') as HTMLElement;
 const clearHistoryBtn = document.querySelector('#clear-history') as HTMLButtonElement;
 const requestDialog = document.querySelector('#request-dialog') as HTMLDialogElement;
 const requestTitle = document.querySelector('#request-title') as HTMLHeadingElement;
-const requestKind = document.querySelector('#request-kind') as HTMLParagraphElement;
-const requestFileIcon = document.querySelector('#request-file-icon') as HTMLSpanElement;
 const requestFileName = document.querySelector('#request-file-name') as HTMLElement;
 const requestFileSize = document.querySelector('#request-file-size') as HTMLElement;
 const requestCountdown = document.querySelector('#request-countdown') as HTMLParagraphElement;
@@ -315,6 +301,10 @@ const pushSection = document.querySelector('#push-section') as HTMLDivElement;
 const pushButton = document.querySelector('#push-button') as HTMLButtonElement;
 const pushStatus = document.querySelector('#push-status') as HTMLParagraphElement;
 const toasts = document.querySelector('#toasts') as HTMLDivElement;
+const layout = document.querySelector('.layout') as HTMLElement;
+const chatPanel = document.querySelector('#chat-panel') as HTMLElement;
+const chatButton = document.querySelector('#chat-button') as HTMLButtonElement;
+const chatBadge = document.querySelector('#chat-badge') as HTMLSpanElement;
 
 const mobileLayout = window.matchMedia('(max-width: 899px)');
 let transferStatusTimeout: number | undefined;
@@ -323,23 +313,6 @@ let replacedByAnotherTab = false;
 const offlineRequestWaiters = new Map<string, { peerId: string; resolve: (accepted: boolean) => void; timeoutId: number }>();
 
 /* ---------- Formatage ---------- */
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) {
-    return `${bytes} o`;
-  }
-
-  const units = ['Ko', 'Mo', 'Go'];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
-}
 
 function formatRemaining(seconds: number) {
   if (!Number.isFinite(seconds)) {
@@ -359,10 +332,6 @@ function formatCountdown(milliseconds: number) {
   const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
   const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
   return `${minutes}:${(seconds % 60).toString().padStart(2, '0')}`;
-}
-
-function formatTime(date: Date) {
-  return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
 function getPeerDisplayName(peerId: string) {
@@ -453,57 +422,7 @@ function renderDeviceIdentity() {
   selfName.textContent = peerState.deviceName;
 }
 
-/* ---------- Presse-papiers, liens et téléchargements ---------- */
-
-// L’API Clipboard n’existe qu’en HTTPS : en HTTP sur le réseau local, on passe par une sélection.
-async function copyToClipboard(text: string) {
-  if (window.isSecureContext && navigator.clipboard) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // On tente la méthode de secours ci-dessous.
-    }
-  }
-
-  const helper = document.createElement('textarea');
-  helper.value = text;
-  helper.setAttribute('readonly', '');
-  helper.style.position = 'fixed';
-  helper.style.opacity = '0';
-  document.body.append(helper);
-  helper.select();
-  helper.setSelectionRange(0, text.length);
-  let copied = false;
-  try {
-    copied = document.execCommand('copy');
-  } catch {
-    copied = false;
-  }
-  helper.remove();
-  return copied;
-}
-
-/** Ajoute le texte en rendant cliquables les liens http(s) ; rien n’est jamais interprété comme du HTML. */
-function appendLinkifiedText(container: HTMLElement, text: string) {
-  const urlPattern = /\bhttps?:\/\/[^\s<>"']+/gi;
-  let lastIndex = 0;
-
-  for (const match of text.matchAll(urlPattern)) {
-    const url = match[0].replace(/[),.;:!?]+$/, '');
-    const start = match.index ?? 0;
-    container.append(text.slice(lastIndex, start));
-    const link = document.createElement('a');
-    link.href = url;
-    link.textContent = url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    container.append(link);
-    lastIndex = start + url.length;
-  }
-
-  container.append(text.slice(lastIndex));
-}
+/* ---------- Téléchargements ---------- */
 
 function downloadUrl(url: string, fileName: string) {
   const anchor = document.createElement('a');
@@ -531,7 +450,7 @@ type EntryState = 'waiting' | 'active' | 'verifying' | 'done' | 'failed' | 'refu
 
 type TransferEntry = {
   id: string;
-  kind: 'file' | 'text';
+  kind: 'file';
   direction: 'sent' | 'received';
   peerId: string;
   state: EntryState;
@@ -540,8 +459,6 @@ type TransferEntry = {
   fileSize?: number;
   mimeType?: string;
   url?: string;
-  text?: string;
-  delivered?: boolean;
   bytes: number;
   startedAt: number;
   lastRenderAt: number;
@@ -574,14 +491,6 @@ function updateEntry(id: string, patch: Partial<TransferEntry>) {
 }
 
 function entrySideLabel(entry: TransferEntry) {
-  if (entry.kind === 'text' && entry.direction === 'received') {
-    return 'Reçu';
-  }
-
-  if (entry.kind === 'text' && entry.state === 'done') {
-    return entry.delivered ? 'Remis ✓' : 'Envoyé';
-  }
-
   switch (entry.state) {
     case 'waiting':
       return 'En attente';
@@ -606,10 +515,6 @@ function entrySubLabel(entry: TransferEntry) {
   const peerName = getPeerDisplayName(entry.peerId);
   const route = entry.direction === 'sent' ? `Vers ${peerName}` : `De ${peerName}`;
 
-  if (entry.kind === 'text' && entry.state !== 'waiting') {
-    return entry.reason ? `${route} · ${entry.reason}` : `${route} · ${formatTime(entry.time)}`;
-  }
-
   switch (entry.state) {
     case 'waiting':
       return entry.expiresAt
@@ -630,7 +535,7 @@ function entrySubLabel(entry: TransferEntry) {
   }
 }
 
-function createIconButton(label: string, iconName: 'copy' | 'download' | 'close') {
+function createIconButton(label: string, iconName: 'download' | 'close') {
   const button = document.createElement('button');
   button.className = 'icon-button small';
   button.type = 'button';
@@ -664,12 +569,12 @@ function renderEntry(entry: TransferEntry) {
     preview.alt = '';
     visual.append(preview);
     visual.classList.add('preview');
-  } else if (entry.kind === 'file' && entry.state === 'done') {
+  } else if (entry.state === 'done') {
     visual.innerHTML = icon('check');
   } else if (['failed', 'refused', 'expired', 'cancelled'].includes(entry.state)) {
     visual.innerHTML = icon('close');
   } else {
-    visual.innerHTML = icon(entry.kind === 'text' ? 'text' : 'file');
+    visual.innerHTML = icon('file');
   }
 
   const main = document.createElement('div');
@@ -678,7 +583,7 @@ function renderEntry(entry: TransferEntry) {
   top.className = 'recent-top';
   const name = document.createElement('strong');
   name.className = 'recent-name';
-  name.textContent = entry.kind === 'text' ? (entry.direction === 'sent' ? 'Texte envoyé' : 'Texte reçu') : entry.fileName ?? '';
+  name.textContent = entry.fileName ?? '';
   const side = document.createElement('span');
   side.className = 'recent-side';
   side.textContent = entrySideLabel(entry);
@@ -699,28 +604,13 @@ function renderEntry(entry: TransferEntry) {
   sub.textContent = entrySubLabel(entry);
   main.append(sub);
 
-  if (entry.kind === 'text' && entry.text !== undefined) {
-    const content = document.createElement('p');
-    content.className = 'text-content';
-    appendLinkifiedText(content, entry.text);
-    main.append(content);
-  }
-
   const actions = document.createElement('div');
   actions.className = 'recent-actions';
 
   if ((entry.state === 'waiting' || entry.state === 'active') && !entry.url) {
-    const cancelButton = createIconButton(entry.kind === 'text' ? 'Annuler l’envoi du texte' : 'Annuler ce transfert', 'close');
+    const cancelButton = createIconButton('Annuler ce transfert', 'close');
     cancelButton.addEventListener('click', () => cancelEntry(entry));
     actions.append(cancelButton);
-  } else if (entry.kind === 'text' && entry.text !== undefined) {
-    const text = entry.text;
-    const copyButton = createIconButton('Copier le texte', 'copy');
-    copyButton.addEventListener('click', async () => {
-      const copied = await copyToClipboard(text);
-      showToast({ message: copied ? 'Texte copié' : 'Copie impossible : sélectionnez le texte à la main', tone: copied ? 'success' : 'error' });
-    });
-    actions.append(copyButton);
   } else if (entry.url) {
     const url = entry.url;
     const saveButton = createIconButton('Enregistrer le fichier', 'download');
@@ -890,6 +780,7 @@ function renderRadar() {
   peerCount.textContent = peers.length === 0
     ? 'Recherche d’appareils…'
     : `${peers.length} appareil${peers.length > 1 ? 's' : ''} connecté${peers.length > 1 ? 's' : ''}`;
+  chat.setPresence(peers.length + 1);
 
   // Le QR code n’apparaît que sur demande : le radar vide propose seulement de l’afficher.
   radarHint.hidden = peers.length > 0;
@@ -901,7 +792,6 @@ function renderRadar() {
 
 /* ---------- Volet « Envoyer vers » ---------- */
 
-let activeTab: 'files' | 'text' = 'files';
 const selectedFiles: File[] = [];
 let sheetCloseTimer: number | undefined;
 
@@ -949,6 +839,8 @@ function selectPeer(peerId: string) {
   }
 
   peerState.selectedPeerId = peerId;
+  // Le volet d’envoi et le chat occupent la même colonne : le chat se referme.
+  chat.close();
   renderSheetHeader();
   openSheet();
   renderRadar();
@@ -958,17 +850,6 @@ function selectPeer(peerId: string) {
       console.error('[GeniusSend] connexion impossible', error);
     });
   }
-}
-
-function setTab(tab: 'files' | 'text') {
-  activeTab = tab;
-  tabFiles.setAttribute('aria-selected', String(tab === 'files'));
-  tabText.setAttribute('aria-selected', String(tab === 'text'));
-  tabFiles.tabIndex = tab === 'files' ? 0 : -1;
-  tabText.tabIndex = tab === 'text' ? 0 : -1;
-  panelFiles.hidden = tab !== 'files';
-  panelText.hidden = tab !== 'text';
-  updateSendButton();
 }
 
 function renderSelectedFiles() {
@@ -998,21 +879,15 @@ function renderSelectedFiles() {
 function addSelectedFiles(files: File[]) {
   if (files.length === 0) return;
   selectedFiles.push(...files);
-  setTab('files');
   renderSelectedFiles();
 }
 
 function updateSendButton() {
-  if (activeTab === 'files') {
-    const total = selectedFiles.reduce((sum, file) => sum + file.size, 0);
-    sendButton.disabled = selectedFiles.length === 0;
-    sendLabel.textContent = selectedFiles.length === 0
-      ? 'Envoyer'
-      : `Envoyer ${selectedFiles.length} fichier${selectedFiles.length > 1 ? 's' : ''} · ${formatBytes(total)}`;
-  } else {
-    sendButton.disabled = !textInput.value.trim();
-    sendLabel.textContent = 'Envoyer le texte';
-  }
+  const total = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+  sendButton.disabled = selectedFiles.length === 0;
+  sendLabel.textContent = selectedFiles.length === 0
+    ? 'Envoyer'
+    : `Envoyer ${selectedFiles.length} fichier${selectedFiles.length > 1 ? 's' : ''} · ${formatBytes(total)}`;
 }
 
 /* ---------- File d’envoi ---------- */
@@ -1082,7 +957,7 @@ function adoptTransferId(transferId: string) {
 /* ---------- Demandes reçues ---------- */
 
 type TransferRequestInfo = { transferId: string; fileName: string; fileSize: number; expiresInMs: number; mimeType?: string; senderName?: string; expiresAt?: number };
-type PendingRequest = { kind: 'file' | 'text'; peerId: string; transfer: TransferRequestInfo; offline: boolean; expiresAt: number };
+type PendingRequest = { peerId: string; transfer: TransferRequestInfo; offline: boolean; expiresAt: number };
 const requestQueue: PendingRequest[] = [];
 let activeRequest: PendingRequest | null = null;
 
@@ -1099,32 +974,20 @@ function renderNextTransferRequest() {
     return;
   }
 
-  const { kind, peerId, transfer } = activeRequest;
-  const senderName = transfer.senderName || getPeerDisplayName(peerId);
-  // Pour un texte, seule sa longueur est connue : le contenu n’arrive qu’après acceptation.
-  if (kind === 'text') {
-    requestKind.textContent = 'Texte entrant';
-    requestTitle.textContent = `${senderName} veut vous envoyer un texte`;
-    requestFileIcon.innerHTML = icon('text');
-    requestFileName.textContent = 'Texte';
-    requestFileSize.textContent = `${transfer.fileSize} caractère${transfer.fileSize > 1 ? 's' : ''}`;
-  } else {
-    requestKind.textContent = 'Fichier entrant';
-    requestTitle.textContent = `${senderName} veut vous envoyer un fichier`;
-    requestFileIcon.innerHTML = icon('file');
-    requestFileName.textContent = transfer.fileName;
-    requestFileSize.textContent = formatBytes(transfer.fileSize);
-  }
+  const { peerId, transfer } = activeRequest;
+  requestTitle.textContent = `${transfer.senderName || getPeerDisplayName(peerId)} veut vous envoyer un fichier`;
+  requestFileName.textContent = transfer.fileName;
+  requestFileSize.textContent = formatBytes(transfer.fileSize);
   requestQueueInfo.hidden = requestQueue.length === 0;
   requestQueueInfo.textContent = `${requestQueue.length} autre${requestQueue.length > 1 ? 's' : ''} demande${requestQueue.length > 1 ? 's' : ''} en attente`;
   renderRequestCountdown();
   if (!requestDialog.open) requestDialog.showModal();
 }
 
-function showTransferRequest(peerId: string, transfer: TransferRequestInfo, offline = false, kind: 'file' | 'text' = 'file') {
+function showTransferRequest(peerId: string, transfer: TransferRequestInfo, offline = false) {
   if (activeRequest?.transfer.transferId === transfer.transferId || requestQueue.some((entry) => entry.transfer.transferId === transfer.transferId)) return;
   const expiresAt = transfer.expiresAt ?? Date.now() + transfer.expiresInMs;
-  requestQueue.push({ kind, peerId, transfer, offline, expiresAt });
+  requestQueue.push({ peerId, transfer, offline, expiresAt });
   renderNextTransferRequest();
 }
 
@@ -1142,19 +1005,8 @@ function removeTransferRequest(transferId: string) {
 function answerRequest(accepted: boolean) {
   const request = activeRequest;
   if (!request) return;
-  const { kind, peerId, transfer, offline } = request;
+  const { peerId, transfer, offline } = request;
   activeRequest = null;
-
-  if (kind === 'text') {
-    if (accepted) {
-      peerState.manager?.acceptText(peerId, transfer.transferId);
-    } else {
-      peerState.manager?.rejectText(peerId, transfer.transferId);
-      showTemporaryTransferStatus('Texte refusé', 5_000);
-    }
-    renderNextTransferRequest();
-    return;
-  }
 
   if (accepted) {
     // La ligne existe avant le premier événement de progression.
@@ -1283,19 +1135,6 @@ function createManager(socket: Socket) {
         showToast({ message: `${getPeerDisplayName(peerId)} a refusé le fichier`, tone: 'error' });
       }
     },
-    onTextRequest: (peerId, request) => {
-      showTransferRequest(peerId, { transferId: request.messageId, fileName: 'Texte', fileSize: request.length, expiresInMs: request.expiresInMs }, false, 'text');
-    },
-    onTextPending: ({ peerId, messageId, text, expiresInMs }) => {
-      upsertEntry({ id: messageId, kind: 'text', direction: 'sent', peerId, text, state: 'waiting', expiresAt: Date.now() + expiresInMs });
-    },
-    onTextReceived: (peerId, text) => {
-      upsertEntry({ id: `text-${Date.now()}-${Math.random().toString(36).slice(2)}`, kind: 'text', direction: 'received', peerId, text, state: 'done' });
-      showToast({ message: `Nouveau texte de ${getPeerDisplayName(peerId)}`, tone: 'info' });
-    },
-    onTextDelivered: (peerId, messageId) => {
-      updateEntry(messageId, { delivered: true });
-    },
     requestOfflineTransfer: (request) => new Promise<boolean>((resolve) => {
       const timeoutId = window.setTimeout(() => {
         offlineRequestWaiters.delete(request.transferId);
@@ -1339,6 +1178,7 @@ function createClientSocket() {
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000
   });
+  chat.attach(socket);
 
   socket.on('connect', () => {
     peerState.id = deviceId;
@@ -1458,52 +1298,12 @@ window.addEventListener('online', reconnectIfNeeded);
 
 /* ---------- Envoi ---------- */
 
-async function sendCurrentText(targetPeerId: string) {
-  const text = textInput.value;
-  if (!text.trim() || !peerState.manager) return;
-
-  // La demande part tout de suite ; la réponse du destinataire arrive plus tard dans « Transferts récents ».
-  textInput.value = '';
-  updateSendButton();
-  if (mobileLayout.matches) closeSheet();
-
-  try {
-    const { messageId, outcome } = await peerState.manager.sendText(targetPeerId, text);
-    const peerName = getPeerDisplayName(targetPeerId);
-    if (outcome === 'accepted') {
-      updateEntry(messageId, { state: 'done', time: new Date(), expiresAt: undefined });
-    } else if (outcome === 'refused') {
-      updateEntry(messageId, { state: 'refused', expiresAt: undefined });
-      showToast({ message: `${peerName} a refusé le texte`, tone: 'error' });
-    } else if (outcome === 'expired') {
-      updateEntry(messageId, { state: 'expired', reason: 'pas de réponse à temps', expiresAt: undefined });
-    } else if (outcome === 'cancelled') {
-      updateEntry(messageId, { state: 'cancelled', expiresAt: undefined });
-    } else {
-      updateEntry(messageId, { state: 'failed', reason: 'connexion perdue', expiresAt: undefined });
-    }
-  } catch (error) {
-    // Rien n’est parti : on rend le texte pour ne pas le perdre.
-    console.error('[GeniusSend] échec de l’envoi du texte', error);
-    if (!textInput.value) {
-      textInput.value = text;
-      updateSendButton();
-    }
-    showToast({ message: error instanceof Error ? error.message : 'Échec de l’envoi du texte', tone: 'error' });
-  }
-}
-
 function sendSelection() {
   const targetPeerId = peerState.selectedPeerId;
   if (!targetPeerId) return;
 
   if (!peerState.manager) {
     showToast({ message: 'Connexion au serveur en cours, réessayez dans un instant', tone: 'error' });
-    return;
-  }
-
-  if (activeTab === 'text') {
-    void sendCurrentText(targetPeerId);
     return;
   }
 
@@ -1519,23 +1319,6 @@ function sendSelection() {
 sendButton.addEventListener('click', sendSelection);
 closeSheetBtn.addEventListener('click', closeSheet);
 sheetBackdrop.addEventListener('click', closeSheet);
-tabFiles.addEventListener('click', () => setTab('files'));
-tabText.addEventListener('click', () => {
-  setTab('text');
-  textInput.focus();
-});
-
-// Flèches gauche/droite pour passer d’un onglet à l’autre, comme dans une barre d’onglets native.
-for (const tab of [tabFiles, tabText]) {
-  tab.addEventListener('keydown', (event) => {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const next = activeTab === 'files' ? 'text' : 'files';
-    setTab(next);
-    (next === 'files' ? tabFiles : tabText).focus();
-  });
-}
-
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && sendSheet.dataset.open === 'true' && !requestDialog.open && !profileDialog.open && !qrDialog.open) {
     closeSheet();
@@ -1597,43 +1380,24 @@ for (const type of ['dragover', 'drop'] as const) {
   });
 }
 
-// Coller une image (capture d’écran…) l’ajoute aux fichiers ; un collage de texte reste normal.
+// Coller une image (capture d’écran…) : dans le chat s’il est ouvert, sinon vers l’appareil choisi.
 document.addEventListener('paste', (event) => {
-  const files = Array.from(event.clipboardData?.files ?? []);
+  const files = Array.from(event.clipboardData?.files ?? []).map(nameClipboardFile);
   if (files.length === 0) {
     return;
   }
 
   event.preventDefault();
-  if (!peerState.selectedPeerId) {
-    showToast({ message: 'Choisissez d’abord un appareil sur le radar', tone: 'info' });
+  if (chat.isOpen()) {
+    chat.uploadFiles(files);
     return;
   }
-  addSelectedFiles(files.map(nameClipboardFile));
-});
-
-textInput.addEventListener('input', updateSendButton);
-// Ctrl+Entrée (ou Cmd+Entrée) envoie le texte sans quitter le clavier.
-textInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault();
-    sendSelection();
+  if (!peerState.selectedPeerId) {
+    showToast({ message: 'Ouvrez le chat ou choisissez un appareil sur le radar', tone: 'info' });
+    return;
   }
+  addSelectedFiles(files);
 });
-
-// La lecture du presse-papiers exige HTTPS ; sinon on garde le collage classique (Ctrl+V, appui long).
-if (window.isSecureContext && navigator.clipboard?.readText) {
-  pasteTextBtn.hidden = false;
-  pasteTextBtn.addEventListener('click', async () => {
-    try {
-      textInput.value = await navigator.clipboard.readText();
-      textInput.focus();
-      updateSendButton();
-    } catch {
-      showToast({ message: 'Accès au presse-papiers refusé : collez avec Ctrl+V ou un appui long', tone: 'error' });
-    }
-  });
-}
 
 clearHistoryBtn.addEventListener('click', clearHistory);
 acceptTransferBtn.addEventListener('click', () => answerRequest(true));
@@ -1722,11 +1486,27 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 
 setupInstall(installButton, (title, message, tone) => showToast({ title, message, tone }));
 
-// Passage ordinateur ↔ téléphone (rotation, redimensionnement) : le volet change de forme.
+// Le chat occupe la colonne de droite sur ordinateur, et tout l’écran sur téléphone.
+const chat = createChat({
+  panel: chatPanel,
+  button: chatButton,
+  badge: chatBadge,
+  deviceId,
+  getSocket: () => peerState.socket,
+  notify: showToast,
+  onOpenChange: (open) => {
+    if (open) closeSheet();
+    layout.classList.toggle('chat-open', open);
+    document.body.classList.toggle('chat-locked', open && mobileLayout.matches);
+  }
+});
+
+// Passage ordinateur ↔ téléphone (rotation, redimensionnement) : le volet et le chat changent de forme.
 mobileLayout.addEventListener('change', () => {
   const open = sendSheet.dataset.open === 'true';
   sheetBackdrop.hidden = !(open && mobileLayout.matches);
   document.body.classList.toggle('sheet-locked', open && mobileLayout.matches);
+  document.body.classList.toggle('chat-locked', chat.isOpen() && mobileLayout.matches);
 });
 
 renderDeviceIdentity();

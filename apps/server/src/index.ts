@@ -1,7 +1,9 @@
-import { createServer, type Server as HttpServer } from 'node:http';
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { createRequire } from 'node:module';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream, mkdirSync, rmSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { Server as SocketIOServer } from 'socket.io';
 import { z } from 'zod';
@@ -47,6 +49,59 @@ const pushSubscriptionSchema = z.object({
 export type Peer = z.infer<typeof peerSchema>;
 export type SignalMessage = z.infer<typeof signalSchema>;
 
+// Live chat shared by every connected device: messages and files are kept for 24 hours.
+export const CHAT_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const CHAT_HISTORY_LIMIT = 200;
+export const CHAT_MAX_FILE_BYTES = 100 * 1024 * 1024;
+export const CHAT_MAX_TEXT_LENGTH = 4000;
+// Only these formats are shown inline; anything else is downloaded so an uploaded page can never run in the app.
+const CHAT_INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+const chatTextSchema = z.object({ text: z.string().trim().min(1).max(CHAT_MAX_TEXT_LENGTH) });
+
+export type ChatMessage = {
+  id: string;
+  authorId: string;
+  authorName: string;
+  kind: 'text' | 'file';
+  text?: string;
+  file?: { id: string; name: string; size: number; mimeType: string };
+  createdAt: number;
+};
+
+type ChatRow = {
+  id: string;
+  author_id: string;
+  author_name: string;
+  kind: 'text' | 'file';
+  text: string | null;
+  file_id: string | null;
+  file_name: string | null;
+  file_size: number | null;
+  mime_type: string | null;
+  created_at: number;
+};
+
+function chatRowToMessage(row: ChatRow): ChatMessage {
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    kind: row.kind,
+    text: row.text ?? undefined,
+    file: row.file_id
+      ? { id: row.file_id, name: row.file_name ?? 'fichier', size: row.file_size ?? 0, mimeType: row.mime_type ?? 'application/octet-stream' }
+      : undefined,
+    createdAt: row.created_at
+  };
+}
+
+/** Keeps a readable file name without path separators or control characters. */
+function sanitizeFileName(value: string) {
+  const name = value.replace(/[\\/]/g, '_').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200);
+  return name || 'fichier';
+}
+
 export function createSignalServer(port = 3001, databasePath = process.env.GENIUSSEND_DB_PATH ?? resolve(dirname(fileURLToPath(import.meta.url)), '../data/geniussend.sqlite')) {
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
@@ -83,7 +138,24 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       expires_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS offline_transfers_recipient ON offline_transfers(recipient_id, expires_at);
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      author_id TEXT NOT NULL,
+      author_name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      text TEXT,
+      file_id TEXT,
+      file_name TEXT,
+      file_size INTEGER,
+      mime_type TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS chat_messages_created_at ON chat_messages(created_at);
+    CREATE INDEX IF NOT EXISTS chat_messages_file_id ON chat_messages(file_id);
   `);
+  // Chat attachments live next to the database, in the persistent Docker volume.
+  const chatFilesDirectory = join(dirname(databasePath), 'chat-files');
+  mkdirSync(chatFilesDirectory, { recursive: true });
   // The sender keeps file bytes only in its open tab. Pending requests cannot survive a server restart.
   database.prepare('DELETE FROM offline_transfers').run();
   // Devices unseen for 30 days are forgotten so the table does not grow forever.
@@ -100,10 +172,20 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       console.error('[GeniusSend] Invalid VAPID configuration:', error);
     }
   }
-  // Socket.IO handles its own path; every other request only gets the health check used by Docker/Coolify.
+  // Socket.IO handles its own path; the other routes are the health check and the chat attachments.
   const httpServer = createServer((request, response) => {
-    if (request.url === '/health') {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    if (url.pathname === '/health') {
       response.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
+      return;
+    }
+    if (url.pathname === '/chat/files' && request.method === 'POST') {
+      void handleChatUpload(request, response);
+      return;
+    }
+    const download = /^\/chat\/files\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (download && request.method === 'GET') {
+      handleChatDownload(download[1], url.searchParams.has('download'), response);
       return;
     }
     response.writeHead(404).end();
@@ -118,6 +200,135 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
   const onlineSockets = new Map<string, string>();
   const hiddenPeers = new Set<string>();
   const offlineTransferTimers = new Map<string, NodeJS.Timeout>();
+
+  function chatHistory(): ChatMessage[] {
+    const rows = database.prepare('SELECT * FROM chat_messages WHERE created_at > ? ORDER BY created_at DESC LIMIT ?')
+      .all(Date.now() - CHAT_RETENTION_MS, CHAT_HISTORY_LIMIT) as ChatRow[];
+    return rows.reverse().map(chatRowToMessage);
+  }
+
+  function publishChatMessage(message: ChatMessage) {
+    database.prepare(`INSERT INTO chat_messages (id, author_id, author_name, kind, text, file_id, file_name, file_size, mime_type, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(message.id, message.authorId, message.authorName, message.kind, message.text ?? null, message.file?.id ?? null,
+        message.file?.name ?? null, message.file?.size ?? null, message.file?.mimeType ?? null, message.createdAt);
+    io.emit('chat:message', message);
+  }
+
+  /** Deletes messages older than 24 hours, together with their attachments. */
+  function purgeChat() {
+    const cutoff = Date.now() - CHAT_RETENTION_MS;
+    const expiredFiles = database.prepare('SELECT file_id FROM chat_messages WHERE created_at <= ? AND file_id IS NOT NULL').all(cutoff) as Array<{ file_id: string }>;
+    for (const { file_id: fileId } of expiredFiles) {
+      rmSync(join(chatFilesDirectory, fileId), { force: true });
+    }
+    database.prepare('DELETE FROM chat_messages WHERE created_at <= ?').run(cutoff);
+  }
+
+  /** The uploader must be a device currently connected to the chat. */
+  function onlinePeer(deviceId: string) {
+    const socketId = onlineSockets.get(deviceId);
+    return socketId ? (io.sockets.sockets.get(socketId)?.data.peer as Peer | undefined) : undefined;
+  }
+
+  function sendJson(response: ServerResponse, status: number, body: unknown) {
+    response.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));
+  }
+
+  // The file body is streamed straight to disk, so large attachments never sit in memory.
+  async function handleChatUpload(request: IncomingMessage, response: ServerResponse) {
+    const author = onlinePeer(String(request.headers['x-device-id'] ?? ''));
+    if (!author) {
+      request.resume();
+      sendJson(response, 403, { error: 'Open GeniusSend on this device before sharing files in the chat' });
+      return;
+    }
+    if (Number(request.headers['content-length'] ?? 0) > CHAT_MAX_FILE_BYTES) {
+      request.resume();
+      sendJson(response, 413, { error: 'File too large' });
+      return;
+    }
+
+    let fileName = 'fichier';
+    try {
+      fileName = sanitizeFileName(decodeURIComponent(String(request.headers['x-file-name'] ?? '')));
+    } catch {
+      fileName = 'fichier';
+    }
+    const mimeType = String(request.headers['content-type'] ?? 'application/octet-stream').split(';')[0].trim().slice(0, 100) || 'application/octet-stream';
+    const fileId = randomUUID();
+    const filePath = join(chatFilesDirectory, fileId);
+    let size = 0;
+
+    try {
+      await pipeline(
+        request,
+        async function* (source: AsyncIterable<Buffer>) {
+          for await (const chunk of source) {
+            size += chunk.length;
+            if (size > CHAT_MAX_FILE_BYTES) throw new Error('too-large');
+            yield chunk;
+          }
+        },
+        createWriteStream(filePath)
+      );
+    } catch (error) {
+      rmSync(filePath, { force: true });
+      if (!response.headersSent) {
+        const tooLarge = (error as Error).message === 'too-large';
+        sendJson(response, tooLarge ? 413 : 400, { error: tooLarge ? 'File too large' : 'Upload interrupted' });
+      }
+      return;
+    }
+
+    if (size === 0) {
+      rmSync(filePath, { force: true });
+      sendJson(response, 400, { error: 'Empty file' });
+      return;
+    }
+
+    const message: ChatMessage = {
+      id: randomUUID(),
+      authorId: author.id,
+      authorName: author.name,
+      kind: 'file',
+      file: { id: fileId, name: fileName, size, mimeType },
+      createdAt: Date.now()
+    };
+    publishChatMessage(message);
+    sendJson(response, 201, message);
+  }
+
+  function handleChatDownload(fileId: string, forceDownload: boolean, response: ServerResponse) {
+    const row = database.prepare('SELECT * FROM chat_messages WHERE file_id = ? AND created_at > ?').get(fileId, Date.now() - CHAT_RETENTION_MS) as ChatRow | undefined;
+    const filePath = join(chatFilesDirectory, fileId);
+    let size = 0;
+    try {
+      size = statSync(filePath).size;
+    } catch {
+      size = -1;
+    }
+    if (!row || size < 0) {
+      response.writeHead(404).end();
+      return;
+    }
+
+    const mimeType = row.mime_type ?? 'application/octet-stream';
+    const inline = !forceDownload && CHAT_INLINE_IMAGE_TYPES.has(mimeType);
+    const name = row.file_name ?? 'fichier';
+    const asciiName = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+    response.writeHead(200, {
+      'Content-Type': inline ? mimeType : 'application/octet-stream',
+      'Content-Length': size,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, max-age=86400'
+    });
+    createReadStream(filePath).pipe(response);
+  }
+
+  purgeChat();
+  const chatPurgeTimer = setInterval(purgeChat, 10 * 60 * 1000);
 
   function peerList(): Peer[] {
     const rows = database.prepare('SELECT id, name, platform FROM peers ORDER BY name COLLATE NOCASE').all() as Array<{ id: string; name: string; platform: Peer['platform'] }>;
@@ -224,7 +435,18 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       emitPeerList();
       socket.emit('peer:registered', { id: safePeer.id, peer: safePeer });
       socket.emit('push:config', { publicKey: vapidPublicKey || null, configured: pushConfigured });
+      socket.emit('chat:history', chatHistory());
       sendPendingTransfers(safePeer.id, socket.id);
+    });
+
+    socket.on('chat:send', (value) => {
+      const author = socket.data.peer as Peer | undefined;
+      const parsed = chatTextSchema.safeParse(value);
+      if (!author || !parsed.success) {
+        socket.emit('chat:error', { message: 'Message invalide' });
+        return;
+      }
+      publishChatMessage({ id: randomUUID(), authorId: author.id, authorName: author.name, kind: 'text', text: parsed.data.text, createdAt: Date.now() });
     });
 
     socket.on('push:subscribe', (value) => {
@@ -416,6 +638,7 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
           }
 
           io.close(() => {
+            clearInterval(chatPurgeTimer);
             for (const timer of offlineTransferTimers.values()) clearTimeout(timer);
             offlineTransferTimers.clear();
             database.close();

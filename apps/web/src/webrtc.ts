@@ -1,7 +1,6 @@
 import {
   FileTransferProtocol,
   MAX_FILE_SIZE_BYTES,
-  MAX_TEXT_BYTES,
   TRANSFER_ACK_WINDOW,
   TRANSFER_ACCEPT_TIMEOUT_MS,
   createFileHasher,
@@ -49,8 +48,6 @@ export type TransferResult = {
   reason?: string;
 };
 
-export type TextSendOutcome = 'accepted' | 'refused' | 'expired' | 'cancelled' | 'lost';
-
 export type OfflineTransferRequest = {
   transferId: string;
   to: string;
@@ -97,10 +94,6 @@ type ManagerOptions = {
   onTransferPending?: (pending: { peerId: string; transferId: string; fileName: string; expiresInMs: number }) => void;
   onTransferExpired?: (peerId: string, transferId: string) => void;
   onTransferComplete?: (result: TransferResult) => void;
-  onTextRequest?: (peerId: string, request: { messageId: string; length: number; expiresInMs: number }) => void;
-  onTextPending?: (pending: { peerId: string; messageId: string; text: string; expiresInMs: number }) => void;
-  onTextReceived?: (peerId: string, text: string) => void;
-  onTextDelivered?: (peerId: string, messageId: string) => void;
   getPeerName?: (peerId: string) => string;
   isPeerOnline?: (peerId: string) => boolean;
   requestOfflineTransfer?: (request: OfflineTransferRequest) => Promise<boolean>;
@@ -123,10 +116,6 @@ export class PeerConnectionManager {
   private readonly pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
   private readonly pendingChunkHeaders = new Map<string, Array<Extract<TransferMessage, { type: 'chunk-header' }>>>();
   private readonly approvedOfflineTransfers = new Set<string>();
-  // Textes : demandes reçues en attente de décision, puis demandes acceptées en attente du contenu.
-  private readonly pendingTextOffers = new Set<string>();
-  private readonly acceptedTextOffers = new Set<string>();
-  private readonly outgoingTexts = new Map<string, { peerId: string; resolve: (outcome: TextSendOutcome) => void; timeoutId: number }>();
   private readonly incomingTransfers = new Map<string, IncomingTransfer>();
   // Une seule demande sortante est active par pair : les fichiers multiples sont envoyés l’un après l’autre.
   private readonly outgoingTransfers = new Map<string, OutgoingTransfer>();
@@ -176,17 +165,6 @@ export class PeerConnectionManager {
 
   /** Annule le transfert indiqué, ou à défaut le transfert en cours avec ce pair. */
   public cancelTransfer(peerId: string, transferId?: string) {
-    // Un texte encore en attente de réponse : on retire la demande.
-    const outgoingText = transferId ? this.outgoingTexts.get(transferId) : undefined;
-    if (transferId && outgoingText?.peerId === peerId) {
-      window.clearTimeout(outgoingText.timeoutId);
-      this.outgoingTexts.delete(transferId);
-      this.sendMessage(peerId, { type: 'cancel', transferId, fileName: '' });
-      outgoingText.resolve('cancelled');
-      this.status('Envoi du texte annulé', false);
-      return;
-    }
-
     this.options.cancelOfflineTransfer?.(peerId);
     const outgoingEntry = Array.from(this.outgoingTransfers.entries())
       .find(([id, transfer]) => transfer.peerId === peerId && (!transferId || id === transferId));
@@ -223,74 +201,6 @@ export class PeerConnectionManager {
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
     this.options.sendSignal('offer', { sdp: offer.sdp }, peerId);
-  }
-
-  /**
-   * Envoie un texte en deux temps : une demande d’abord, puis le contenu seulement si le
-   * destinataire accepte. Lève une erreur si l’appareil est injoignable (rien n’est parti).
-   */
-  public async sendText(peerId: string, text: string): Promise<{ messageId: string; outcome: TextSendOutcome }> {
-    if (!text.trim()) {
-      throw new Error('Le texte à envoyer est vide.');
-    }
-    if (new TextEncoder().encode(text).byteLength > MAX_TEXT_BYTES) {
-      throw new Error('Le texte est trop long (60 Ko maximum). Envoyez-le plutôt comme fichier.');
-    }
-
-    const peerName = this.peerDisplayName(peerId);
-    const channel = await this.connect(peerId);
-    if (!channel) {
-      throw new Error(`${peerName} est injoignable. Vérifiez que GeniusSend est ouvert sur cet appareil.`);
-    }
-
-    const messageId = this.createTransferId();
-    const outcome = await new Promise<TextSendOutcome>((resolve) => {
-      const timeoutId = window.setTimeout(() => {
-        if (this.outgoingTexts.get(messageId)?.resolve !== resolve) {
-          return;
-        }
-        this.outgoingTexts.delete(messageId);
-        this.sendMessage(peerId, { type: 'cancel', transferId: messageId, fileName: '', reason: 'expired' });
-        this.status(`${peerName} n’a pas répondu à temps`, false);
-        resolve('expired');
-      }, TRANSFER_ACCEPT_TIMEOUT_MS);
-
-      this.outgoingTexts.set(messageId, { peerId, resolve, timeoutId });
-      this.sendOn(channel, { type: 'text-offer', messageId, length: text.length });
-      this.options.onTextPending?.({ peerId, messageId, text, expiresInMs: TRANSFER_ACCEPT_TIMEOUT_MS });
-      this.status(`En attente de la réponse de ${peerName}…`, true);
-    });
-
-    if (outcome !== 'accepted') {
-      return { messageId, outcome };
-    }
-
-    const current = this.dataChannels.get(peerId);
-    if (!current || current.readyState !== 'open') {
-      return { messageId, outcome: 'lost' };
-    }
-    await this.waitForBuffer(current);
-    this.sendOn(current, { type: 'text', messageId, text });
-    this.status(`Texte envoyé à ${peerName}`, true);
-    return { messageId, outcome };
-  }
-
-  public acceptText(peerId: string, messageId: string) {
-    const key = this.transferKey(peerId, messageId);
-    if (!this.pendingTextOffers.delete(key)) {
-      return;
-    }
-    this.acceptedTextOffers.add(key);
-    this.sendMessage(peerId, { type: 'text-response', messageId, accepted: true });
-    this.status('Réception du texte…', true);
-  }
-
-  public rejectText(peerId: string, messageId: string) {
-    if (!this.pendingTextOffers.delete(this.transferKey(peerId, messageId))) {
-      return;
-    }
-    this.sendMessage(peerId, { type: 'text-response', messageId, accepted: false });
-    this.status('Vous avez refusé le texte', false);
   }
 
   /**
@@ -602,24 +512,6 @@ export class PeerConnectionManager {
       this.rejectPendingChunkAcks(transferId, lostError);
     }
 
-    for (const [messageId, outgoing] of Array.from(this.outgoingTexts.entries())) {
-      if (outgoing.peerId !== peerId) continue;
-      window.clearTimeout(outgoing.timeoutId);
-      this.outgoingTexts.delete(messageId);
-      outgoing.resolve('lost');
-    }
-
-    // Les demandes de texte de cet appareil n’aboutiront plus : elles disparaissent.
-    const prefix = `${peerId}:`;
-    for (const key of Array.from(this.pendingTextOffers)) {
-      if (!key.startsWith(prefix)) continue;
-      this.pendingTextOffers.delete(key);
-      this.options.onTransferExpired?.(peerId, key.slice(prefix.length));
-    }
-    for (const key of Array.from(this.acceptedTextOffers)) {
-      if (key.startsWith(prefix)) this.acceptedTextOffers.delete(key);
-    }
-
     this.discardConnection(peerId);
     if (interrupted) {
       this.status(lostError.message, false);
@@ -715,49 +607,6 @@ export class PeerConnectionManager {
 
     const peerName = this.peerDisplayName(peerId);
 
-    // Demande d’envoi de texte : le destinataire doit l’accepter avant de recevoir le contenu.
-    if (message.type === 'text-offer') {
-      this.pendingTextOffers.add(this.transferKey(peerId, message.messageId));
-      this.options.onTextRequest?.(peerId, {
-        messageId: message.messageId,
-        length: Number(message.length) || 0,
-        expiresInMs: TRANSFER_ACCEPT_TIMEOUT_MS
-      });
-      this.status(`${peerName} veut vous envoyer un texte`, true);
-      return;
-    }
-
-    if (message.type === 'text-response') {
-      const outgoing = this.outgoingTexts.get(message.messageId);
-      if (outgoing?.peerId === peerId) {
-        window.clearTimeout(outgoing.timeoutId);
-        this.outgoingTexts.delete(message.messageId);
-        if (!message.accepted) {
-          this.status(`${peerName} a refusé le texte`, false);
-        }
-        outgoing.resolve(message.accepted ? 'accepted' : 'refused');
-      }
-      return;
-    }
-
-    // Seul un texte dont la demande a été acceptée est affiché, puis confirmé à l’expéditeur.
-    if (message.type === 'text') {
-      if (!this.acceptedTextOffers.delete(this.transferKey(peerId, message.messageId))) {
-        return;
-      }
-      if (typeof message.text !== 'string' || !message.text || new TextEncoder().encode(message.text).byteLength > MAX_TEXT_BYTES) {
-        return;
-      }
-      this.options.onTextReceived?.(peerId, message.text);
-      this.sendMessage(peerId, { type: 'text-ack', messageId: message.messageId });
-      return;
-    }
-
-    if (message.type === 'text-ack') {
-      this.options.onTextDelivered?.(peerId, message.messageId);
-      return;
-    }
-
     // Une demande de transfert commence par un message d'initialisation.
     if (message.type === 'init') {
       if (!Number.isSafeInteger(message.fileSize) || message.fileSize < 0 || message.fileSize > MAX_FILE_SIZE_BYTES) {
@@ -831,8 +680,6 @@ export class PeerConnectionManager {
 
     if (message.type === 'cancel') {
       this.incomingTransfers.delete(this.transferKey(peerId, message.transferId));
-      this.pendingTextOffers.delete(this.transferKey(peerId, message.transferId));
-      this.acceptedTextOffers.delete(this.transferKey(peerId, message.transferId));
       const headers = this.pendingChunkHeaders.get(peerId)?.filter((header) => header.transferId !== message.transferId) ?? [];
       if (headers.length > 0) {
         this.pendingChunkHeaders.set(peerId, headers);
