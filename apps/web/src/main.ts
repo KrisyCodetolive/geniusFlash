@@ -123,7 +123,6 @@ app.innerHTML = `
         <span class="status-dot" aria-hidden="true"></span><span class="pill-label" id="server-status">Connexion…</span>
       </span>
       <span class="pill device-pill" title="Cet appareil">${platformIcon(detectedPlatform)}<span id="device-pill-label"></span></span>
-      <button class="icon-button chat-button" id="chat-button" type="button" aria-label="Ouvrir le chat" aria-pressed="false" title="Chat">${icon('chat')}<span class="chat-badge" id="chat-badge" hidden></span></button>
       <button class="icon-button" id="qr-button" type="button" aria-label="Afficher le QR code pour connecter un appareil" title="QR code">${icon('qr')}</button>
       <button class="icon-button install-button" id="install-button" type="button" aria-label="Installer l’application GeniusSend" title="Installer l’application" hidden>${icon('download')}</button>
       <button class="icon-button" id="profile-button" type="button" aria-label="Profil de cet appareil" title="Profil">${icon('user')}</button>
@@ -249,6 +248,8 @@ app.innerHTML = `
     <a class="share-url" id="share-url"></a>
     <p class="field-help qr-caption" id="share-hint" hidden>« localhost » ne fonctionne que sur ce PC : sur les autres appareils, utilisez son adresse IP.</p>
   </dialog>
+
+  <button class="chat-fab" id="chat-button" type="button" aria-label="Ouvrir le chat" aria-pressed="false" title="Chat">${icon('chat')}<span class="chat-badge" id="chat-badge" hidden></span></button>
 
   <div class="toasts" id="toasts"></div>
 `;
