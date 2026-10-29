@@ -3,6 +3,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 export const TRANSFER_ACK_WINDOW = 8;
 export const TRANSFER_ACCEPT_TIMEOUT_MS = 3 * 60 * 1000;
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 ** 3;
+// Un texte part en un seul message : on reste sous la taille maximale des messages WebRTC mobiles.
+export const MAX_TEXT_BYTES = 60 * 1024;
 
 export type TransferMessage =
   | {
@@ -56,6 +58,15 @@ export type TransferMessage =
       type: 'chunk-ack';
       transferId: string;
       chunkIndex: number;
+    }
+  | {
+      type: 'text';
+      messageId: string;
+      text: string;
+    }
+  | {
+      type: 'text-ack';
+      messageId: string;
     };
 
 export class FileTransferProtocol {

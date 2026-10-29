@@ -1,4 +1,4 @@
-import { FileTransferProtocol, MAX_FILE_SIZE_BYTES, TRANSFER_ACK_WINDOW, TRANSFER_ACCEPT_TIMEOUT_MS, type TransferMessage } from './file-transfer';
+import { FileTransferProtocol, MAX_FILE_SIZE_BYTES, MAX_TEXT_BYTES, TRANSFER_ACK_WINDOW, TRANSFER_ACCEPT_TIMEOUT_MS, type TransferMessage } from './file-transfer';
 
 export type Peer = {
   id: string;
@@ -31,6 +31,8 @@ export class PeerConnectionManager {
   private readonly onTransferCancelled?: (peerId: string) => void;
   private readonly onTransferPending?: (pending: { peerId: string; transferId: string; fileName: string; expiresInMs: number }) => void;
   private readonly onTransferExpired?: (peerId: string, transferId: string) => void;
+  private readonly onTextReceived?: (peerId: string, text: string) => void;
+  private readonly onTextDelivered?: (peerId: string, messageId: string) => void;
   private readonly getPeerName?: (peerId: string) => string;
   private readonly sendSignal: (type: 'offer' | 'answer' | 'candidate', payload: Record<string, unknown>, to: string) => void;
   private readonly localPeerId: string;
@@ -53,6 +55,8 @@ export class PeerConnectionManager {
     onTransferCancelled?: (peerId: string) => void;
     onTransferPending?: (pending: { peerId: string; transferId: string; fileName: string; expiresInMs: number }) => void;
     onTransferExpired?: (peerId: string, transferId: string) => void;
+    onTextReceived?: (peerId: string, text: string) => void;
+    onTextDelivered?: (peerId: string, messageId: string) => void;
     getPeerName?: (peerId: string) => string;
     requestOfflineTransfer?: (request: { transferId: string; to: string; fileName: string; fileSize: number; mimeType: string; totalChunks: number; hash: string; expiresInMs: number }) => Promise<boolean>;
     cancelOfflineTransfer?: (peerId: string) => void;
@@ -67,6 +71,8 @@ export class PeerConnectionManager {
     this.onTransferCancelled = options.onTransferCancelled;
     this.onTransferPending = options.onTransferPending;
     this.onTransferExpired = options.onTransferExpired;
+    this.onTextReceived = options.onTextReceived;
+    this.onTextDelivered = options.onTextDelivered;
     this.getPeerName = options.getPeerName;
     this.requestOfflineTransfer = options.requestOfflineTransfer;
     this.cancelOfflineTransfer = options.cancelOfflineTransfer;
@@ -162,6 +168,32 @@ export class PeerConnectionManager {
     await connection.setLocalDescription(offer);
     this.sendSignal('offer', { sdp: offer.sdp }, peerId);
     this.onStatusChange(`Négociation WebRTC en cours avec ${this.peerDisplayName(peerId)}`, true);
+  }
+
+  /** Envoie un texte en un seul message ; le destinataire l’affiche sans demande d’acceptation. */
+  public async sendText(peerId: string, text: string) {
+    if (!text.trim()) {
+      throw new Error('Le texte à envoyer est vide.');
+    }
+    if (new TextEncoder().encode(text).byteLength > MAX_TEXT_BYTES) {
+      throw new Error('Le texte est trop long (60 Ko maximum). Envoyez-le plutôt comme fichier.');
+    }
+
+    this.onStatusChange('Connexion au destinataire…', true);
+    await this.initiate(peerId);
+    const channel = await this.waitForOpenChannel(peerId);
+    if (!channel) {
+      throw new Error('Le destinataire est injoignable. Vérifiez qu’il a GeniusSend ouvert.');
+    }
+
+    const message: TransferMessage = {
+      type: 'text',
+      messageId: this.createTransferId(),
+      text
+    };
+    await this.waitForBuffer(channel);
+    channel.send(this.fileTransferProtocol.serializeMessage(message));
+    this.onStatusChange(`Texte envoyé à ${this.peerDisplayName(peerId)}`, true);
   }
 
   public async sendFile(peerId: string, file: File, forceOfflineRequest = false) {
@@ -560,6 +592,21 @@ export class PeerConnectionManager {
       return;
     }
 
+    // Un texte est remis directement, puis confirmé à l’expéditeur.
+    if (message.type === 'text') {
+      if (typeof message.text !== 'string' || !message.text || new TextEncoder().encode(message.text).byteLength > MAX_TEXT_BYTES) {
+        return;
+      }
+      this.onTextReceived?.(peerId, message.text);
+      this.sendTextAcknowledgement(peerId, message.messageId);
+      return;
+    }
+
+    if (message.type === 'text-ack') {
+      this.onTextDelivered?.(peerId, message.messageId);
+      return;
+    }
+
     // Une demande de transfert commence par un message d'initialisation.
     if (message.type === 'init') {
       if (!Number.isSafeInteger(message.fileSize) || message.fileSize < 0 || message.fileSize > MAX_FILE_SIZE_BYTES) {
@@ -895,6 +942,19 @@ export class PeerConnectionManager {
       type: 'chunk-ack',
       transferId,
       chunkIndex
+    };
+    channel.send(this.fileTransferProtocol.serializeMessage(acknowledgement));
+  }
+
+  private sendTextAcknowledgement(peerId: string, messageId: string) {
+    const channel = this.dataChannels.get(peerId);
+    if (!channel || channel.readyState !== 'open') {
+      return;
+    }
+
+    const acknowledgement: TransferMessage = {
+      type: 'text-ack',
+      messageId
     };
     channel.send(this.fileTransferProtocol.serializeMessage(acknowledgement));
   }

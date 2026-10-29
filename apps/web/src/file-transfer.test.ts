@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FileTransferProtocol, TRANSFER_ACK_WINDOW, TRANSFER_ACCEPT_TIMEOUT_MS } from './file-transfer';
+import { FileTransferProtocol, MAX_TEXT_BYTES, TRANSFER_ACK_WINDOW, TRANSFER_ACCEPT_TIMEOUT_MS } from './file-transfer';
 
 describe('file transfer protocol', () => {
   it('should split a payload into chunks and verify its hash', async () => {
@@ -72,5 +72,24 @@ describe('file transfer protocol', () => {
 
   it('should allow three minutes for the recipient to accept a transfer', () => {
     expect(TRANSFER_ACCEPT_TIMEOUT_MS).toBe(180_000);
+  });
+
+  it('should preserve shared text exactly, including line breaks and accents', () => {
+    const protocol = new FileTransferProtocol();
+    const messages = [
+      { type: 'text', messageId: 'text-1', text: 'Bonjour 👋\nLigne 2 : « éàç » <b>pas du HTML</b>' },
+      { type: 'text-ack', messageId: 'text-1' }
+    ];
+
+    for (const message of messages) {
+      expect(protocol.deserializeMessage(protocol.serializeMessage(message))).toEqual(message);
+    }
+  });
+
+  it('should keep shared text small enough to fit in a single data channel message', () => {
+    const protocol = new FileTransferProtocol();
+    const message = protocol.serializeMessage({ type: 'text', messageId: 'text-2', text: 'é'.repeat(MAX_TEXT_BYTES / 2) });
+
+    expect(new TextEncoder().encode(message).byteLength).toBeLessThan(256 * 1024);
   });
 });

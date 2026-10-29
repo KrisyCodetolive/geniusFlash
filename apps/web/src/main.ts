@@ -155,6 +155,11 @@ app.innerHTML = `
       <button class="secondary-button" id="close-notification" type="button">Fermer</button>
     </section>
 
+    <section class="panel" id="received-texts-panel" hidden>
+      <h2>Textes reçus</h2>
+      <ul class="text-list" id="received-texts"></ul>
+    </section>
+
     <section class="panel progress-panel" id="progress-panel" hidden>
       <div class="progress-heading">
         <h2 id="progress-title">Transfert en cours</h2>
@@ -169,6 +174,14 @@ app.innerHTML = `
       <h2 id="target-title">Sélectionnez un appareil</h2>
       <button class="secondary-button" id="file-button" type="button">Choisir un fichier</button>
       <input id="file-input" type="file" hidden />
+      <div class="text-share">
+        <label for="text-input">Ou envoyez un texte</label>
+        <textarea id="text-input" rows="4" placeholder="Saisissez ou collez un texte, un lien, un code…"></textarea>
+        <div class="text-actions">
+          <button class="secondary-button" id="paste-text" type="button" hidden>Coller</button>
+          <button class="primary-button" id="send-text" type="button">Envoyer le texte</button>
+        </div>
+      </div>
     </section>
   </main>
 `;
@@ -191,6 +204,11 @@ const deviceList = document.querySelector('#device-list');
 const targetTitle = document.querySelector('#target-title');
 const fileButton = document.querySelector('#file-button');
 const fileInput = document.querySelector('#file-input') as HTMLInputElement | null;
+const textInput = document.querySelector('#text-input') as HTMLTextAreaElement | null;
+const pasteTextBtn = document.querySelector('#paste-text') as HTMLButtonElement | null;
+const sendTextBtn = document.querySelector('#send-text') as HTMLButtonElement | null;
+const receivedTextsPanel = document.querySelector('#received-texts-panel') as HTMLElement | null;
+const receivedTexts = document.querySelector('#received-texts') as HTMLUListElement | null;
 const transferPanel = document.querySelector('#transfer-panel') as HTMLDivElement | null;
 const transferTitle = document.querySelector('#transfer-title') as HTMLHeadingElement | null;
 const transferMessage = document.querySelector('#transfer-message') as HTMLParagraphElement | null;
@@ -432,6 +450,68 @@ function showNotification(title: string, message: string) {
   notificationPanel.hidden = false;
 }
 
+// L’API Clipboard n’existe qu’en HTTPS : en HTTP sur le réseau local, on passe par une sélection.
+async function copyToClipboard(text: string) {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // On tente la méthode de secours ci-dessous.
+    }
+  }
+
+  const helper = document.createElement('textarea');
+  helper.value = text;
+  helper.setAttribute('readonly', '');
+  helper.style.position = 'fixed';
+  helper.style.opacity = '0';
+  document.body.append(helper);
+  helper.select();
+  helper.setSelectionRange(0, text.length);
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    copied = false;
+  }
+  helper.remove();
+  return copied;
+}
+
+function addReceivedText(peerId: string, text: string) {
+  if (!receivedTextsPanel || !receivedTexts) {
+    return;
+  }
+
+  const item = document.createElement('li');
+  const meta = document.createElement('div');
+  meta.className = 'text-meta';
+  const time = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  meta.textContent = `${getPeerDisplayName(peerId)} · ${time}`;
+
+  // textContent : le texte reçu n’est jamais interprété comme du HTML.
+  const content = document.createElement('p');
+  content.className = 'text-content';
+  content.textContent = text;
+
+  const copyButton = document.createElement('button');
+  copyButton.className = 'secondary-button';
+  copyButton.type = 'button';
+  copyButton.textContent = 'Copier';
+  copyButton.addEventListener('click', async () => {
+    const copied = await copyToClipboard(text);
+    copyButton.textContent = copied ? 'Copié ✓' : 'Copie impossible : sélectionnez le texte';
+    window.setTimeout(() => {
+      copyButton.textContent = 'Copier';
+    }, 2_000);
+  });
+
+  item.append(meta, content, copyButton);
+  receivedTexts.prepend(item);
+  receivedTextsPanel.hidden = false;
+}
+
 function refreshTransferInterface(options: { keepProgress: boolean }) {
   // On rafraîchit uniquement les éléments nécessaires, sans recharger le document.
   renderPeers();
@@ -631,6 +711,13 @@ function createClientSocket() {
           expireTransferRequest(peerId, transferId);
         },
         onTransferProgress: updateTransferProgress,
+        onTextReceived: (peerId, text) => {
+          addReceivedText(peerId, text);
+          showTemporaryTransferStatus(`Nouveau texte de ${getPeerDisplayName(peerId)}`, 5_000);
+        },
+        onTextDelivered: (peerId) => {
+          showTemporaryTransferStatus(`Texte reçu par ${getPeerDisplayName(peerId)}`, 5_000);
+        },
         onTransferCancelled: (peerId) => {
           if (peerState.activeTransferPeerId === peerId) {
             refreshTransferInterface({ keepProgress: false });
@@ -948,6 +1035,64 @@ if (fileButton && fileInput) {
     } catch (error) {
       console.error('[GeniusSend] échec de l’envoi', error);
       updateTransferStatus(error instanceof Error ? error.message : 'Échec de l’envoi du fichier');
+    }
+  });
+}
+
+if (textInput && sendTextBtn) {
+  const sendText = async () => {
+    const text = textInput.value;
+    const targetPeerId = peerState.selectedPeerId;
+
+    if (!text.trim()) {
+      updateTransferStatus('Saisissez un texte à envoyer');
+      return;
+    }
+
+    if (!targetPeerId) {
+      updateTransferStatus('Sélectionnez un destinataire avant d’envoyer un texte');
+      return;
+    }
+
+    if (!peerState.manager) {
+      updateTransferStatus('Connexion WebRTC indisponible');
+      return;
+    }
+
+    sendTextBtn.disabled = true;
+    try {
+      await peerState.manager.sendText(targetPeerId, text);
+      textInput.value = '';
+    } catch (error) {
+      console.error('[GeniusSend] échec de l’envoi du texte', error);
+      updateTransferStatus(error instanceof Error ? error.message : 'Échec de l’envoi du texte');
+    } finally {
+      sendTextBtn.disabled = false;
+    }
+  };
+
+  sendTextBtn.addEventListener('click', () => {
+    void sendText();
+  });
+
+  // Ctrl+Entrée (ou Cmd+Entrée) envoie le texte sans quitter le clavier.
+  textInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      void sendText();
+    }
+  });
+}
+
+// La lecture du presse-papiers exige HTTPS ; sinon on garde le collage classique (Ctrl+V, appui long).
+if (pasteTextBtn && textInput && window.isSecureContext && navigator.clipboard?.readText) {
+  pasteTextBtn.hidden = false;
+  pasteTextBtn.addEventListener('click', async () => {
+    try {
+      textInput.value = await navigator.clipboard.readText();
+      textInput.focus();
+    } catch {
+      updateTransferStatus('Accès au presse-papiers refusé : collez avec Ctrl+V ou un appui long');
     }
   });
 }
