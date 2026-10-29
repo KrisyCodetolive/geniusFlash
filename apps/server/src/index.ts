@@ -14,7 +14,9 @@ export const peerSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   platform: z.enum(['android', 'ios', 'windows', 'macos', 'linux', 'unknown']),
-  status: z.enum(['online', 'offline']).optional()
+  status: z.enum(['online', 'offline']).optional(),
+  // A hidden device (for example the machine hosting the server) stays reachable but is not shown on the radar.
+  hidden: z.boolean().optional()
 });
 
 export const signalSchema = z.object({
@@ -114,13 +116,14 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
   });
 
   const onlineSockets = new Map<string, string>();
+  const hiddenPeers = new Set<string>();
   const offlineTransferTimers = new Map<string, NodeJS.Timeout>();
 
   function peerList(): Peer[] {
     const rows = database.prepare('SELECT id, name, platform FROM peers ORDER BY name COLLATE NOCASE').all() as Array<{ id: string; name: string; platform: Peer['platform'] }>;
     return rows
       .filter((peer) => onlineSockets.has(peer.id))
-      .map((peer) => ({ ...peer, status: 'online' }));
+      .map((peer) => ({ ...peer, status: 'online', hidden: hiddenPeers.has(peer.id) }));
   }
 
   function sanitizePeer(value: unknown): Peer | null {
@@ -134,7 +137,8 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       id: peer.id,
       name: peer.name,
       platform: peer.platform,
-      status: peer.status ?? 'online'
+      status: peer.status ?? 'online',
+      hidden: peer.hidden ?? false
     };
   }
 
@@ -214,6 +218,8 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
         io.to(previousSocket).disconnectSockets(false);
       }
       onlineSockets.set(safePeer.id, socket.id);
+      if (safePeer.hidden) hiddenPeers.add(safePeer.id);
+      else hiddenPeers.delete(safePeer.id);
       socket.data.peer = safePeer;
       emitPeerList();
       socket.emit('peer:registered', { id: safePeer.id, peer: safePeer });
@@ -325,6 +331,7 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       const current = socket.data.peer as Peer | undefined;
       if (current && onlineSockets.get(current.id) === socket.id) {
         onlineSockets.delete(current.id);
+        hiddenPeers.delete(current.id);
         cancelSenderRequests(current.id, 'sender-disconnected');
         emitPeerList();
       }
@@ -369,6 +376,7 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       const current = socket.data.peer as Peer | undefined;
       if (current && onlineSockets.get(current.id) === socket.id) {
         onlineSockets.delete(current.id);
+        hiddenPeers.delete(current.id);
         cancelSenderRequests(current.id, 'sender-disconnected');
         emitPeerList();
       }

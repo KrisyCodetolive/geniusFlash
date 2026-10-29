@@ -25,6 +25,7 @@ export type SignalPayload = {
 
 export type TransferProgress = {
   peerId: string;
+  transferId: string;
   direction: 'sending' | 'receiving';
   fileName: string;
   bytesTransferred: number;
@@ -90,7 +91,7 @@ type ManagerOptions = {
   onTransferRequest?: (peerId: string, transfer: TransferRequest) => void;
   onTransferProgress?: (progress: TransferProgress) => void;
   onTransferDecision?: (decision: { peerId: string; transferId: string; fileName: string; accepted: boolean }) => void;
-  onTransferCancelled?: (peerId: string) => void;
+  onTransferCancelled?: (peerId: string, transferId?: string) => void;
   onTransferPending?: (pending: { peerId: string; transferId: string; fileName: string; expiresInMs: number }) => void;
   onTransferExpired?: (peerId: string, transferId: string) => void;
   onTransferComplete?: (result: TransferResult) => void;
@@ -148,7 +149,7 @@ export class PeerConnectionManager {
     transfer.accepted = true;
     // La réponse est envoyée avant que l’émetteur puisse commencer les chunks.
     this.sendMessage(peerId, { type: 'response', transferId, fileName: transfer.fileName, accepted: true });
-    this.emitProgress(peerId, 'receiving', transfer.fileName, 0, transfer.fileSize);
+    this.emitProgress(peerId, transferId, 'receiving', transfer.fileName, 0, transfer.fileSize);
     this.status(`Réception de ${transfer.fileName}…`, true);
   }
 
@@ -165,10 +166,13 @@ export class PeerConnectionManager {
     this.status(`Vous avez refusé ${transfer.fileName}`, false);
   }
 
-  public cancelTransfer(peerId: string) {
+  /** Annule le transfert indiqué, ou à défaut le transfert en cours avec ce pair. */
+  public cancelTransfer(peerId: string, transferId?: string) {
     this.options.cancelOfflineTransfer?.(peerId);
-    const outgoingEntry = Array.from(this.outgoingTransfers.entries()).find(([, transfer]) => transfer.peerId === peerId);
-    const incoming = Array.from(this.incomingTransfers.values()).find((transfer) => transfer.peerId === peerId && transfer.accepted);
+    const outgoingEntry = Array.from(this.outgoingTransfers.entries())
+      .find(([id, transfer]) => transfer.peerId === peerId && (!transferId || id === transferId));
+    const incoming = Array.from(this.incomingTransfers.values())
+      .find((transfer) => transfer.peerId === peerId && transfer.accepted && (!transferId || transfer.transferId === transferId));
 
     if (outgoingEntry) {
       const [transferId, outgoing] = outgoingEntry;
@@ -183,7 +187,7 @@ export class PeerConnectionManager {
       this.sendMessage(peerId, { type: 'cancel', transferId: incoming.transferId, fileName: incoming.fileName });
     }
 
-    this.options.onTransferCancelled?.(peerId);
+    this.options.onTransferCancelled?.(peerId, outgoingEntry?.[0] ?? incoming?.transferId ?? transferId);
     this.status('Transfert annulé', false);
   }
 
@@ -283,7 +287,7 @@ export class PeerConnectionManager {
       this.outgoingTransfers.set(transferId, { peerId, fileName: file.name, resolve: () => undefined, cancelled: false, timeoutId: 0 });
     }
 
-    this.emitProgress(peerId, 'sending', file.name, 0, file.size);
+    this.emitProgress(peerId, transferId, 'sending', file.name, 0, file.size);
     this.status(`Envoi de ${file.name} à ${peerName}…`, true);
     const hasher = createFileHasher();
     let bytesSent = 0;
@@ -312,12 +316,12 @@ export class PeerConnectionManager {
           if (!this.outgoingTransfers.has(transferId)) {
             return false;
           }
-          this.emitProgress(peerId, 'sending', file.name, bytesSent, file.size);
+          this.emitProgress(peerId, transferId, 'sending', file.name, bytesSent, file.size);
         }
       }
 
       if (totalChunks === 0) {
-        this.emitProgress(peerId, 'sending', file.name, 0, 0);
+        this.emitProgress(peerId, transferId, 'sending', file.name, 0, 0);
       }
 
       // Fin de transfert : le destinataire compare ce hash avec celui qu’il a calculé en recevant.
@@ -470,7 +474,7 @@ export class PeerConnectionManager {
     };
 
     channel.onerror = (event) => {
-      console.error('[GeniusSend] erreur RTCDataChannel', { peerId, event });
+      console.warn('[GeniusSend] canal interrompu (appareil parti ou réseau coupé)', { peerId, event });
     };
 
     channel.onmessage = (event) => {
@@ -670,7 +674,7 @@ export class PeerConnectionManager {
 
       if (preapproved) {
         this.sendMessage(peerId, { type: 'response', transferId: message.transferId, fileName: message.fileName, accepted: true });
-        this.emitProgress(peerId, 'receiving', message.fileName, 0, message.fileSize);
+        this.emitProgress(peerId, message.transferId, 'receiving', message.fileName, 0, message.fileSize);
         this.status(`Réception de ${message.fileName}…`, true);
         return;
       }
@@ -735,7 +739,7 @@ export class PeerConnectionManager {
         this.options.onTransferExpired?.(peerId, message.transferId);
         this.status('La demande de transfert a expiré', false);
       } else {
-        this.options.onTransferCancelled?.(peerId);
+        this.options.onTransferCancelled?.(peerId, message.transferId);
         this.status(`${peerName} a annulé le transfert`, false);
       }
       return;
@@ -800,7 +804,7 @@ export class PeerConnectionManager {
       transfer.pendingBytes = 0;
     }
 
-    this.emitProgress(peerId, 'receiving', transfer.fileName, transfer.bytesReceived, transfer.fileSize);
+    this.emitProgress(peerId, transfer.transferId, 'receiving', transfer.fileName, transfer.bytesReceived, transfer.fileSize);
     const windowComplete = (header.chunkIndex + 1) % TRANSFER_ACK_WINDOW === 0;
     const transferComplete = header.chunkIndex === transfer.totalChunks - 1;
     if (windowComplete || transferComplete) {
@@ -822,7 +826,7 @@ export class PeerConnectionManager {
     const file = new Blob([...transfer.blobs, ...transfer.pendingParts], { type: transfer.mimeType });
     this.incomingTransfers.delete(this.transferKey(transfer.peerId, transfer.transferId));
     this.sendMessage(transfer.peerId, { type: 'complete', transferId: transfer.transferId, fileName: transfer.fileName, ok: true });
-    this.emitProgress(transfer.peerId, 'receiving', transfer.fileName, transfer.fileSize, transfer.fileSize);
+    this.emitProgress(transfer.peerId, transfer.transferId, 'receiving', transfer.fileName, transfer.fileSize, transfer.fileSize);
     this.options.onTransferComplete?.({
       peerId: transfer.peerId,
       transferId: transfer.transferId,
@@ -906,9 +910,10 @@ export class PeerConnectionManager {
     });
   }
 
-  private emitProgress(peerId: string, direction: 'sending' | 'receiving', fileName: string, bytesTransferred: number, totalBytes: number) {
+  private emitProgress(peerId: string, transferId: string, direction: 'sending' | 'receiving', fileName: string, bytesTransferred: number, totalBytes: number) {
     this.options.onTransferProgress?.({
       peerId,
+      transferId,
       direction,
       fileName,
       bytesTransferred: Math.min(totalBytes, bytesTransferred),

@@ -133,6 +133,12 @@ describe('signal server', () => {
     expect(await response.text()).toBe('ok');
   });
 
+  it('flags hidden devices so clients can leave them off the radar', async () => {
+    const list = new Promise<Array<{ id: string; hidden: boolean }>>((resolve) => clientA.once('peers:list', resolve));
+    clientB.emit('peer:register', { id: 'device-b', name: 'iPhone-B', platform: 'ios', hidden: true });
+    expect((await list).find((peer) => peer.id === 'device-b')?.hidden).toBe(true);
+  });
+
   it('warns a tab before another tab of the same device replaces it', async () => {
     const port = (server.httpServer.address() as { port: number }).port;
     const clientC = createClient(`http://localhost:${port}`, { transports: ['websocket'] });
