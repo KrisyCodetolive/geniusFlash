@@ -372,7 +372,7 @@ h1 {
   position: relative;
   width: min(100%, 580px);
   aspect-ratio: 1;
-  margin: 24px auto 40px;
+  margin: 24px auto 76px;
 }
 
 .radar-ring {
@@ -533,8 +533,9 @@ h1 {
 }
 
 .radar-node.searching {
-  --x: 72%;
-  --y: 88%;
+  /* Centrée sous le dernier cercle, entre le radar et le texte. */
+  --x: 50%;
+  --y: calc(100% + 10px);
   --node-size: 44px;
   pointer-events: none;
 }
@@ -1675,7 +1676,7 @@ body.sheet-locked .chat-fab {
   .radar {
     --node-size: 52px;
     --self-size: 92px;
-    margin: 18px auto 34px;
+    margin: 18px auto 74px;
   }
 
   .radar-node {
@@ -1701,6 +1702,7 @@ body.sheet-locked .chat-fab {
 
   .radar-node.searching {
     --node-size: 36px;
+    --y: calc(100% + 16px);
   }
 
   /* Le volet monte depuis le bas de l’écran, par-dessus la page. */
