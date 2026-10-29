@@ -1,4 +1,5 @@
 import type { Socket } from 'socket.io-client';
+import { EMOJI_CATEGORIES, isShortEmojiMessage, loadRecentEmojis, rememberEmoji } from './emoji';
 import { appendLinkifiedText, formatBytes, formatTime } from './format';
 import { icon } from './icons';
 
@@ -87,7 +88,9 @@ export function createChat({ panel, button, badge, deviceId, getSocket, notify, 
       <p class="chat-empty" id="chat-empty">Aucun message pour l’instant.<br />Dites bonjour 👋</p>
     </div>
     <ul class="chat-uploads" id="chat-uploads" aria-label="Fichiers en cours d’envoi"></ul>
+    <div class="emoji-picker" id="emoji-picker" role="dialog" aria-label="Choisir un emoji" hidden></div>
     <form class="chat-composer" id="chat-composer">
+      <button class="icon-button small chat-attach" id="chat-emoji" type="button" aria-label="Ajouter un emoji" aria-expanded="false" aria-controls="emoji-picker" title="Emojis">${icon('smile')}</button>
       <button class="icon-button small chat-attach" id="chat-attach" type="button" aria-label="Joindre des fichiers" title="Joindre des fichiers">${icon('paperclip')}</button>
       <input id="chat-file-input" type="file" multiple hidden />
       <textarea id="chat-input" rows="1" maxlength="${MAX_TEXT_LENGTH}" placeholder="Écrire un message…" aria-label="Message"></textarea>
@@ -104,6 +107,9 @@ export function createChat({ panel, button, badge, deviceId, getSocket, notify, 
   const sendButton = panel.querySelector('#chat-send') as HTMLButtonElement;
   const attachButton = panel.querySelector('#chat-attach') as HTMLButtonElement;
   const fileInput = panel.querySelector('#chat-file-input') as HTMLInputElement;
+  const emojiButton = panel.querySelector('#chat-emoji') as HTMLButtonElement;
+  const emojiPicker = panel.querySelector('#emoji-picker') as HTMLDivElement;
+  const touchScreen = window.matchMedia('(pointer: coarse)');
 
   const messageIds = new Set<string>();
   let lastMessage: ChatMessage | null = null;
@@ -206,6 +212,10 @@ export function createChat({ panel, button, badge, deviceId, getSocket, notify, 
       const text = document.createElement('p');
       text.className = 'chat-text';
       appendLinkifiedText(text, message.text ?? '');
+      if (isShortEmojiMessage(message.text ?? '')) {
+        text.classList.add('emoji-only');
+        bubble.classList.add('emoji-bubble');
+      }
       bubble.append(text);
     }
 
@@ -265,7 +275,48 @@ export function createChat({ panel, button, badge, deviceId, getSocket, notify, 
     socket.emit('chat:send', { text });
     input.value = '';
     updateSendState();
+    setEmojiPicker(false);
     input.focus();
+  }
+
+  function renderEmojiPicker() {
+    const recent = loadRecentEmojis();
+    const sections = recent.length > 0 ? [{ label: 'Récents', emojis: recent }, ...EMOJI_CATEGORIES] : EMOJI_CATEGORIES;
+    emojiPicker.innerHTML = '';
+    for (const section of sections) {
+      const title = document.createElement('p');
+      title.className = 'emoji-section';
+      title.textContent = section.label;
+      const grid = document.createElement('div');
+      grid.className = 'emoji-grid';
+      for (const emoji of section.emojis) {
+        const choice = document.createElement('button');
+        choice.type = 'button';
+        choice.className = 'emoji-choice';
+        choice.textContent = emoji;
+        choice.setAttribute('aria-label', emoji);
+        grid.append(choice);
+      }
+      emojiPicker.append(title, grid);
+    }
+  }
+
+  function setEmojiPicker(visible: boolean) {
+    if (visible) renderEmojiPicker();
+    emojiPicker.hidden = !visible;
+    emojiButton.setAttribute('aria-expanded', String(visible));
+    emojiButton.classList.toggle('active', visible);
+  }
+
+  /** Insère l’emoji à la position du curseur ; le sélecteur reste ouvert pour en ajouter d’autres. */
+  function insertEmoji(emoji: string) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.setRangeText(emoji, start, end, 'end');
+    rememberEmoji(emoji);
+    updateSendState();
+    // Sur téléphone, on évite d’ouvrir le clavier à chaque emoji.
+    if (!touchScreen.matches) input.focus();
   }
 
   function uploadFile(file: File) {
@@ -338,7 +389,12 @@ export function createChat({ panel, button, badge, deviceId, getSocket, notify, 
   button.addEventListener('click', () => setOpen(!open));
   panel.querySelector('[data-chat-close]')?.addEventListener('click', () => setOpen(false));
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && open && !document.querySelector('dialog[open]')) setOpen(false);
+    if (event.key !== 'Escape' || !open || document.querySelector('dialog[open]')) return;
+    if (!emojiPicker.hidden) {
+      setEmojiPicker(false);
+      return;
+    }
+    setOpen(false);
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && open) {
@@ -360,6 +416,16 @@ export function createChat({ panel, button, badge, deviceId, getSocket, notify, 
     sendText();
   });
   attachButton.addEventListener('click', () => fileInput.click());
+  emojiButton.addEventListener('click', () => setEmojiPicker(emojiPicker.hidden));
+  emojiPicker.addEventListener('click', (event) => {
+    const choice = (event.target as HTMLElement).closest('.emoji-choice');
+    if (choice?.textContent) insertEmoji(choice.textContent);
+  });
+  // Un clic ailleurs dans le chat referme le sélecteur.
+  panel.addEventListener('pointerdown', (event) => {
+    const target = event.target as Node;
+    if (!emojiPicker.hidden && !emojiPicker.contains(target) && !emojiButton.contains(target)) setEmojiPicker(false);
+  });
   fileInput.addEventListener('change', () => {
     const files = Array.from(fileInput.files ?? []);
     fileInput.value = '';
