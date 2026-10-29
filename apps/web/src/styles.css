@@ -67,6 +67,27 @@ html {
   background-color: var(--bg);
 }
 
+/* Barres de défilement fines et discrètes, aux couleurs du thème (sans les flèches de Windows). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Anciennes versions de Safari, qui ignorent les deux propriétés ci-dessus. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
