@@ -263,7 +263,6 @@ const transferStatus = document.querySelector('#transfer-status') as HTMLParagra
 const peerCount = document.querySelector('#peer-count') as HTMLSpanElement;
 const radar = document.querySelector('#radar') as HTMLDivElement;
 const selfName = document.querySelector('#self-name') as HTMLSpanElement;
-const radarSearching = document.querySelector('#radar-searching') as HTMLDivElement;
 const radarHint = document.querySelector('#radar-hint') as HTMLDivElement;
 const qrButton = document.querySelector('#qr-button') as HTMLButtonElement;
 const radarQrButton = document.querySelector('#radar-qr-button') as HTMLButtonElement;
@@ -669,24 +668,45 @@ window.setInterval(() => {
 /* ---------- Radar ---------- */
 
 const nodeElements = new Map<string, HTMLButtonElement>();
-// Rayons des orbites, en fraction de la largeur du radar (le centre est à 0,5).
-const INNER_ORBIT = 0.3;
-const OUTER_ORBIT = 0.44;
-const INNER_CAPACITY = 6;
+// Rayons des trois cercles du radar, en fraction de sa largeur et de sa hauteur (le centre est à 0,5).
+// Ils correspondent aux cercles dessinés (.ring-1, .ring-2, .ring-3).
+const INNER_ORBIT = 0.22;
+const MIDDLE_ORBIT = 0.335;
+const OUTER_ORBIT = 0.45;
 
-/** Positions des appareils : l’orbite intérieure d’abord, puis l’orbite extérieure. */
+/** Cercles utilisés : celui du milieu jusqu’à 6 appareils, puis deux, puis les trois. */
+function orbitsFor(count: number) {
+  if (count <= 6) return [MIDDLE_ORBIT];
+  if (count <= 15) return [MIDDLE_ORBIT, OUTER_ORBIT];
+  return [OUTER_ORBIT, INNER_ORBIT, MIDDLE_ORBIT];
+}
+
+/**
+ * Chaque appareil a sa propre direction autour du centre, et deux voisins sont sur des cercles
+ * différents : aucun appareil ne se retrouve aligné derrière un autre.
+ */
 function orbitPositions(count: number) {
-  const positions: Array<{ x: number; y: number }> = [];
-  const innerCount = Math.min(count, INNER_CAPACITY);
-  const outerCount = count - innerCount;
-  const place = (index: number, total: number, radius: number, offsetDegrees: number) => {
-    const angle = ((offsetDegrees + (index * 360) / total) * Math.PI) / 180;
-    positions.push({ x: 50 + radius * 100 * Math.cos(angle), y: 50 + radius * 100 * Math.sin(angle) });
-  };
+  const radii = orbitsFor(count);
+  const step = 360 / Math.max(count, 1);
+  // Peu d’appareils : en haut à droite d’abord ; beaucoup : on évite le point le plus bas du radar.
+  const start = count <= 6 ? -55 : -90 + step / 2;
+  const radiusAt = (index: number) => radii[index % radii.length];
+  return Array.from({ length: count }, (_, index) => {
+    let radius = radiusAt(index);
+    // Le dernier appareil est voisin du premier (le tour est bouclé) : ils ne doivent pas partager un cercle.
+    if (index === count - 1 && count > radii.length && radius === radiusAt(0)) {
+      radius = radii.find((value) => value !== radiusAt(0) && value !== radiusAt(index - 1)) ?? (MIDDLE_ORBIT + OUTER_ORBIT) / 2;
+    }
+    const angle = ((start + index * step) * Math.PI) / 180;
+    return { x: 50 + radius * 100 * Math.cos(angle), y: 50 + radius * 100 * Math.sin(angle) };
+  });
+}
 
-  for (let index = 0; index < innerCount; index += 1) place(index, innerCount, INNER_ORBIT, -55);
-  for (let index = 0; index < outerCount; index += 1) place(index, outerCount, OUTER_ORBIT, -20);
-  return positions;
+/** Au-delà de 9 puis de 15 appareils, les bulles rétrécissent pour ne pas se chevaucher. */
+function radarDensity(count: number) {
+  if (count > 15) return 'crowded';
+  if (count > 9) return 'dense';
+  return 'normal';
 }
 
 function visiblePeers() {
@@ -771,8 +791,8 @@ function renderRadar() {
     status.dataset.state = selected ? 'selected' : state.key;
   });
 
-  // La bulle « Recherche… » occupe une place libre de l’orbite extérieure.
-  radarSearching.hidden = peers.length > INNER_CAPACITY;
+  // Plus il y a d’appareils, plus les bulles sont compactes (voir .radar[data-density]).
+  radar.dataset.density = radarDensity(peers.length);
   peerCount.textContent = peers.length === 0
     ? 'Recherche d’appareils…'
     : `${peers.length} appareil${peers.length > 1 ? 's' : ''} connecté${peers.length > 1 ? 's' : ''}`;

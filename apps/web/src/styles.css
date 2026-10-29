@@ -390,10 +390,43 @@ h1 {
 .radar {
   --node-size: 64px;
   --self-size: 116px;
+  --label-width: 150px;
   position: relative;
-  width: min(100%, 580px);
+  width: min(100%, 760px);
   aspect-ratio: 1;
   margin: 24px auto 76px;
+}
+
+/* Beaucoup d’appareils : bulles et noms plus compacts pour qu’ils ne se chevauchent pas. */
+.radar[data-density='dense'] {
+  --node-size: 54px;
+  --label-width: 120px;
+}
+
+.radar[data-density='crowded'] {
+  --node-size: 46px;
+  --self-size: 100px;
+  --label-width: 100px;
+}
+
+.radar[data-density='dense'] .node-label,
+.radar[data-density='crowded'] .node-label {
+  font-size: 0.8rem;
+}
+
+.radar[data-density='crowded'] .node-status {
+  font-size: 0.7rem;
+}
+
+.radar[data-density='crowded'] .node-circle .icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Beaucoup d’appareils : la bulle « Recherche… » libère le bas du radar. */
+.radar[data-density='dense'] .radar-node.searching,
+.radar[data-density='crowded'] .radar-node.searching {
+  display: none;
 }
 
 .radar-ring {
@@ -407,18 +440,18 @@ h1 {
 }
 
 .ring-1 {
-  width: 36%;
-  height: 36%;
+  width: 44%;
+  height: 44%;
 }
 
 .ring-2 {
-  width: 60%;
-  height: 60%;
+  width: 67%;
+  height: 67%;
 }
 
 .ring-3 {
-  width: 88%;
-  height: 88%;
+  width: 90%;
+  height: 90%;
 }
 
 /* Balayage lent façon radar, désactivé si l’utilisateur préfère moins d’animations. */
@@ -445,7 +478,7 @@ h1 {
   position: absolute;
   left: var(--x);
   top: var(--y);
-  width: 150px;
+  width: var(--label-width);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1768,11 +1801,47 @@ body.sheet-locked .chat-fab {
   .radar {
     --node-size: 52px;
     --self-size: 92px;
+    --label-width: 104px;
     margin: 18px auto 74px;
   }
 
-  .radar-node {
-    width: 104px;
+  .radar[data-density='dense'] {
+    --node-size: 44px;
+    --self-size: 82px;
+    --label-width: 84px;
+  }
+
+  .radar[data-density='crowded'] {
+    --node-size: 38px;
+    --self-size: 74px;
+    --label-width: 68px;
+  }
+
+  .radar[data-density='dense'] .node-label,
+  .radar[data-density='crowded'] .node-label {
+    font-size: 0.7rem;
+  }
+
+  /* Sur téléphone, beaucoup d’appareils : le radar s’allonge en hauteur et n’affiche que les noms. */
+  .radar[data-density='dense'],
+  .radar[data-density='crowded'] {
+    aspect-ratio: 3 / 4;
+    margin-bottom: 40px;
+  }
+
+  .radar[data-density='crowded'] {
+    aspect-ratio: 2 / 3;
+  }
+
+  .radar[data-density='dense'] .radar-node.peer .node-status,
+  .radar[data-density='crowded'] .radar-node.peer .node-status {
+    display: none;
+  }
+
+  .radar[data-density='dense'] .node-circle .icon,
+  .radar[data-density='crowded'] .node-circle .icon {
+    width: 17px;
+    height: 17px;
   }
 
   .node-circle .icon {
