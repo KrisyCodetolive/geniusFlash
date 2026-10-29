@@ -110,4 +110,40 @@ describe('signal server', () => {
     clientB.emit('transfer:offline:decision', { transferId: 'offline-transfer-1', accepted: true });
     expect(await decision).toMatchObject({ transferId: 'offline-transfer-1', accepted: true });
   });
+
+  it('accepts offline requests without a hash, which is now computed while sending', async () => {
+    const queued = new Promise<{ transferId: string }>((resolve) => clientA.once('transfer:offline:queued', resolve));
+    clientA.emit('transfer:offline:request', {
+      transferId: 'offline-transfer-2',
+      to: 'device-b',
+      fileName: 'notes.txt',
+      fileSize: 10,
+      mimeType: 'text/plain',
+      totalChunks: 1,
+      expiresInMs: 60_000
+    });
+    expect((await queued).transferId).toBe('offline-transfer-2');
+    clientA.emit('transfer:offline:cancel', { transferId: 'offline-transfer-2' });
+  });
+
+  it('answers the health check used by Docker and Coolify', async () => {
+    const port = (server.httpServer.address() as { port: number }).port;
+    const response = await fetch(`http://localhost:${port}/health`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('ok');
+  });
+
+  it('warns a tab before another tab of the same device replaces it', async () => {
+    const port = (server.httpServer.address() as { port: number }).port;
+    const clientC = createClient(`http://localhost:${port}`, { transports: ['websocket'] });
+    await new Promise<void>((resolve) => clientC.once('connect', resolve));
+
+    const replaced = new Promise<void>((resolve) => clientA.once('peer:replaced', () => resolve()));
+    const disconnected = new Promise<string>((resolve) => clientA.once('disconnect', resolve));
+    clientC.emit('peer:register', { id: 'device-a', name: 'Android-A', platform: 'android' });
+
+    await replaced;
+    expect(await disconnected).toBe('io server disconnect');
+    clientC.close();
+  });
 });

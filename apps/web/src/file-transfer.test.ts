@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FileTransferProtocol, MAX_TEXT_BYTES, TRANSFER_ACK_WINDOW, TRANSFER_ACCEPT_TIMEOUT_MS } from './file-transfer';
+import { CHUNK_SIZE_BYTES, FileTransferProtocol, MAX_TEXT_BYTES, TRANSFER_ACK_WINDOW, TRANSFER_ACCEPT_TIMEOUT_MS, createFileHasher, toHex } from './file-transfer';
 
 describe('file transfer protocol', () => {
   it('should split a payload into chunks and verify its hash', async () => {
@@ -84,6 +84,29 @@ describe('file transfer protocol', () => {
     for (const message of messages) {
       expect(protocol.deserializeMessage(protocol.serializeMessage(message))).toEqual(message);
     }
+  });
+
+  it('should hash a file read chunk by chunk exactly like the whole file', async () => {
+    const protocol = new FileTransferProtocol();
+    const bytes = new Uint8Array(CHUNK_SIZE_BYTES * 2 + 123).map((_, index) => index % 251);
+    const file = new Blob([bytes]);
+    const totalChunks = protocol.countChunks(file.size);
+    const hasher = createFileHasher();
+    let bytesRead = 0;
+
+    for (let index = 0; index < totalChunks; index += 1) {
+      const chunk = await protocol.readChunk(file, index);
+      bytesRead += chunk.byteLength;
+      hasher.update(new Uint8Array(chunk));
+    }
+
+    expect(totalChunks).toBe(3);
+    expect(bytesRead).toBe(bytes.byteLength);
+    expect(toHex(hasher.digest())).toBe(await protocol.computeHash(bytes.buffer));
+  });
+
+  it('should count zero chunks for an empty file', () => {
+    expect(new FileTransferProtocol().countChunks(0)).toBe(0);
   });
 
   it('should keep shared text small enough to fit in a single data channel message', () => {

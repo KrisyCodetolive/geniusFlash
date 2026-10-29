@@ -1,44 +1,132 @@
+/* Couleurs centralisées : le thème clair suit automatiquement le réglage du système. */
 :root {
+  color-scheme: dark;
   --bg: #020817;
-  --panel: #0f172a;
+  --bg-glow: #0f172a;
+  --panel: rgba(15, 23, 42, 0.9);
   --panel-soft: #111827;
   --border: #334155;
   --text: #e2e8f0;
   --muted: #94a3b8;
   --accent: #38bdf8;
   --accent-strong: #0ea5e9;
+  --accent-soft: rgba(14, 165, 233, 0.16);
+  --on-accent: #082f49;
   --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.14);
+  --warning: #fbbf24;
   --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+  --shadow: 0 10px 30px rgba(2, 8, 23, 0.35);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f1f5f9;
+    --bg-glow: #e0f2fe;
+    --panel: rgba(255, 255, 255, 0.94);
+    --panel-soft: #f8fafc;
+    --border: #cbd5e1;
+    --text: #0f172a;
+    --muted: #475569;
+    --accent: #0284c7;
+    --accent-strong: #0369a1;
+    --accent-soft: rgba(2, 132, 199, 0.1);
+    --on-accent: #ffffff;
+    --success: #059669;
+    --success-soft: rgba(5, 150, 105, 0.1);
+    --warning: #b45309;
+    --danger: #dc2626;
+    --danger-soft: rgba(220, 38, 38, 0.08);
+    --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  }
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* L’attribut hidden doit gagner même sur les blocs en display: flex ou grid. */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  background-color: var(--bg);
+}
+
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: Inter, 'Segoe UI', sans-serif;
-  background: radial-gradient(circle at top, #0f172a 0%, var(--bg) 60%);
+  font-family: Inter, 'Segoe UI', system-ui, sans-serif;
+  background: radial-gradient(circle at top, var(--bg-glow) 0%, var(--bg) 60%) fixed;
   color: var(--text);
 }
 
 button {
   cursor: pointer;
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+textarea:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--accent);
+}
+
+.icon {
+  width: 1.15em;
+  height: 1.15em;
+  flex-shrink: 0;
 }
 
 .shell {
   max-width: 980px;
   margin: 0 auto;
-  padding: 40px 20px 64px;
+  padding: 32px 20px 64px;
 }
+
+/* En-tête */
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 8px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .topbar-actions {
@@ -48,61 +136,120 @@ button {
 }
 
 .icon-button {
+  display: inline-grid;
+  place-items: center;
   width: 44px;
   height: 44px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--panel);
   color: var(--text);
-  font-size: 1.2rem;
 }
 
-.icon-button:hover {
+.icon-button:hover,
+.icon-button[aria-expanded='true'] {
   border-color: var(--accent);
-  background: rgba(14, 165, 233, 0.16);
+  background: var(--accent-soft);
 }
 
-.eyebrow {
-  margin: 0 0 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  font-size: 12px;
+/* Bouton d’installation : bien visible, sans écraser le reste de l’en-tête. */
+.install-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  font-weight: 700;
+  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-h1 {
-  margin: 0;
-  font-size: clamp(2rem, 5vw, 3rem);
+.install-button .icon {
+  width: 20px;
+  height: 20px;
 }
+
+.install-button span {
+  white-space: nowrap;
+}
+
+.install-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px rgba(14, 165, 233, 0.45);
+}
+
+/* Le navigateur est prêt à installer : un halo discret attire l’œil. */
+.install-button.ready::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid var(--accent);
+  opacity: 0;
+  animation: install-pulse 2.4s ease-out infinite;
+}
+
+@keyframes install-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .install-button.ready::after {
+    animation: none;
+  }
+}
+
+/* Panneaux */
 
 h2 {
   margin-top: 0;
   margin-bottom: 16px;
-  font-size: 1.2rem;
+  font-size: 1.15rem;
 }
 
 .panel {
-  background: rgba(15, 23, 42, 0.9);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 20px 22px;
   margin-top: 20px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.35);
+  box-shadow: var(--shadow);
 }
 
-.status-panel {
+.panel-heading {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
 
-.profile-panel {
-  border-color: var(--accent);
+.status-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
 }
 
-.notification-panel {
-  border-color: var(--danger);
+.status-line {
+  display: flex;
+  align-items: center;
+}
+
+.profile-panel {
+  border-color: var(--accent);
 }
 
 .profile-fields {
@@ -145,6 +292,10 @@ h2 {
   opacity: 0.72;
 }
 
+#push-section {
+  margin-top: 8px;
+}
+
 .status-dot {
   display: inline-block;
   width: 10px;
@@ -152,22 +303,17 @@ h2 {
   border-radius: 50%;
   background: var(--danger);
   margin-right: 8px;
-  vertical-align: middle;
 }
 
 .status-dot.connected {
   background: var(--success);
+  box-shadow: 0 0 0 4px var(--success-soft);
 }
 
 .device-meta {
+  width: 100%;
   color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.selected-file {
-  margin: 12px 0 0;
-  color: var(--muted);
-  overflow-wrap: anywhere;
+  font-size: 0.85rem;
 }
 
 .transfer-status {
@@ -177,63 +323,254 @@ h2 {
 
 .transfer-countdown,
 .request-countdown {
-  color: var(--danger);
+  color: var(--warning);
   font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
 .request-countdown {
-  margin: 8px 0 0;
+  margin: 12px 0 0;
 }
 
-.device-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 12px;
+/* Demande de transfert entrante */
+
+.request-panel {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow);
 }
 
-.device-list li {
+.request-heading {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  background: var(--panel-soft);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  cursor: pointer;
+  gap: 14px;
 }
 
-.device-list li.selected {
-  border-color: var(--accent);
-  background: rgba(14, 165, 233, 0.16);
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.16);
+.request-heading h2 {
+  margin-bottom: 4px;
 }
 
-.device-list li:hover {
-  border-color: var(--accent);
-}
-
-.peer-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.peer-meta small {
+.request-heading p {
+  margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
-.empty-state {
-  color: var(--muted);
+.request-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.request-icon .icon {
+  width: 24px;
+  height: 24px;
 }
 
 .transfer-actions {
   display: flex;
   gap: 12px;
   margin-top: 16px;
+}
+
+/* Notifications : la couleur dépend du message (info, succès, erreur). */
+
+.notification-panel[data-tone='info'] {
+  border-color: var(--accent);
+}
+
+.notification-panel[data-tone='success'] {
+  border-color: var(--success);
+}
+
+.notification-panel[data-tone='error'] {
+  border-color: var(--danger);
+  background: linear-gradient(var(--danger-soft), var(--danger-soft)), var(--panel);
+}
+
+.notification-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.notification-actions,
+.progress-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* Appareils */
+
+.device-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.device-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.device-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.device-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.device-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.device-icon .icon {
+  width: 22px;
+  height: 22px;
+}
+
+.peer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.peer-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-meta small {
+  color: var(--muted);
+}
+
+.peer-state {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.peer-state.ready {
+  color: var(--success);
+  border-color: transparent;
+  background: var(--success-soft);
+}
+
+.peer-state.connecting {
+  color: var(--warning);
+}
+
+/* Aucun appareil : QR code pour ouvrir GeniusSend sur un autre appareil. */
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.qr-code {
+  width: 148px;
+  flex-shrink: 0;
+  padding: 6px;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.qr-code svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.empty-copy p {
+  margin: 6px 0 8px;
+  color: var(--muted);
+}
+
+.share-url {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Envoi */
+
+.send-panel {
+  border-color: var(--accent);
+}
+
+.dropzone {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 26px 16px;
+  border: 2px dashed var(--border);
+  border-radius: 16px;
+  background: var(--panel-soft);
+  color: var(--text);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dropzone:hover,
+.dropzone.dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dropzone-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.dropzone-icon .icon {
+  width: 24px;
+  height: 24px;
+}
+
+.dropzone-hint,
+.text-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .text-share {
@@ -267,8 +604,13 @@ h2 {
 
 .text-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 12px;
+}
+
+.text-hint {
+  margin-right: auto;
 }
 
 .text-actions .primary-button:disabled {
@@ -276,34 +618,15 @@ h2 {
   opacity: 0.6;
 }
 
-.text-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 12px;
+/* Les astuces clavier et glisser-déposer n’ont pas de sens sur écran tactile. */
+@media (pointer: coarse) {
+  .dropzone-hint,
+  .text-hint {
+    display: none;
+  }
 }
 
-.text-list li {
-  padding: 12px 14px;
-  background: var(--panel-soft);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-}
-
-.text-meta {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.text-content {
-  margin: 8px 0 12px;
-  max-height: 240px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
+/* Progression */
 
 .progress-heading {
   display: flex;
@@ -314,10 +637,13 @@ h2 {
 
 .progress-heading h2 {
   margin-bottom: 10px;
+  overflow-wrap: anywhere;
 }
 
 .progress-heading strong {
   color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .progress-panel progress {
@@ -332,12 +658,126 @@ h2 {
   color: var(--muted);
 }
 
-.progress-panel .secondary-button {
-  margin-top: 14px;
+.progress-panel[data-state='done'] {
+  border-color: var(--success);
 }
+
+.progress-panel[data-state='done'] h2::before {
+  content: '✓ ';
+  color: var(--success);
+}
+
+.progress-panel[data-state='done'] progress,
+.progress-panel[data-state='done'] .progress-heading strong {
+  accent-color: var(--success);
+  color: var(--success);
+}
+
+.progress-panel[data-state='failed'] {
+  border-color: var(--danger);
+}
+
+.progress-panel[data-state='failed'] h2 {
+  color: var(--danger);
+}
+
+/* Historique */
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.history-item {
+  padding: 12px 14px;
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+}
+
+.history-item.received {
+  border-left-color: var(--success);
+}
+
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.history-state {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+.history-state.delivered {
+  color: var(--success);
+}
+
+.text-content {
+  margin: 8px 0 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.history-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 12px;
+  min-width: 0;
+}
+
+.history-file div {
+  display: grid;
+  min-width: 0;
+}
+
+.history-file strong {
+  overflow-wrap: anywhere;
+}
+
+.history-file small {
+  color: var(--muted);
+}
+
+.history-preview,
+.history-file-icon {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 10px;
+}
+
+.history-preview {
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.history-file-icon {
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Boutons */
 
 .primary-button,
 .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: none;
   border-radius: 10px;
   padding: 12px 18px;
@@ -347,7 +787,7 @@ h2 {
 
 .primary-button {
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-  color: #082f49;
+  color: var(--on-accent);
 }
 
 .secondary-button {
@@ -361,24 +801,187 @@ h2 {
   transform: translateY(-1px);
 }
 
+.small-button {
+  padding: 8px 12px;
+  font-size: 0.9rem;
+}
+
+.text-button {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  padding: 4px;
+}
+
+/* Fenêtre d’installation */
+
+.install-dialog {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--panel-soft);
+  color: var(--text);
+  box-shadow: 0 30px 80px rgba(2, 8, 23, 0.5);
+}
+
+.install-dialog::backdrop {
+  background: rgba(2, 8, 23, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.install-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.install-hero h2 {
+  margin: 0 0 4px;
+  font-size: 1.3rem;
+}
+
+.install-hero p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.install-app-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.dialog-close {
+  margin-left: auto;
+  align-self: flex-start;
+  width: 36px;
+  height: 36px;
+}
+
+.install-benefits {
+  list-style: none;
+  padding: 0;
+  margin: 20px 0 0;
+  display: grid;
+  gap: 10px;
+}
+
+.install-benefits li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.install-benefits .icon {
+  color: var(--accent);
+}
+
+.install-notice {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  font-size: 0.9rem;
+}
+
+.install-notice .icon {
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.install-notice p {
+  margin: 0;
+}
+
+.install-steps-title {
+  margin: 22px 0 10px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.install-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+  counter-reset: step;
+}
+
+.install-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.step-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* Mobile */
+
 @media (max-width: 640px) {
-  .topbar,
-  .status-panel,
+  .shell {
+    padding: 20px 16px 48px;
+  }
+
+  .tagline,
+  .install-label-extra {
+    display: none;
+  }
+
+  h1 {
+    font-size: 1.35rem;
+  }
+
+  .brand {
+    gap: 10px;
+  }
+
+  .brand-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .install-button {
+    padding: 0 14px 0 12px;
+  }
+
   .transfer-actions,
-  .text-actions {
-    align-items: flex-start;
+  .notification-actions,
+  .progress-actions {
     flex-direction: column;
   }
 
-  .topbar-actions {
-    width: 100%;
+  .text-actions {
     flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .topbar-actions .primary-button,
-  .topbar-actions .secondary-button {
-    width: auto;
   }
 
   .primary-button,
@@ -387,7 +990,28 @@ h2 {
     width: 100%;
   }
 
+  .small-button {
+    width: auto;
+  }
+
   .identity-form {
     flex-direction: column;
+  }
+
+  .empty-state {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+@media (max-width: 380px) {
+  .install-button span {
+    display: none;
+  }
+
+  .install-button {
+    width: 44px;
+    padding: 0;
+    justify-content: center;
   }
 }

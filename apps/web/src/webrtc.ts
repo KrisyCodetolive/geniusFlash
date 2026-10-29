@@ -1,4 +1,13 @@
-import { FileTransferProtocol, MAX_FILE_SIZE_BYTES, MAX_TEXT_BYTES, TRANSFER_ACK_WINDOW, TRANSFER_ACCEPT_TIMEOUT_MS, type TransferMessage } from './file-transfer';
+import {
+  FileTransferProtocol,
+  MAX_FILE_SIZE_BYTES,
+  MAX_TEXT_BYTES,
+  TRANSFER_ACK_WINDOW,
+  TRANSFER_ACCEPT_TIMEOUT_MS,
+  createFileHasher,
+  toHex,
+  type TransferMessage
+} from './file-transfer';
 
 export type Peer = {
   id: string;
@@ -14,6 +23,91 @@ export type SignalPayload = {
   to?: string;
 };
 
+export type TransferProgress = {
+  peerId: string;
+  direction: 'sending' | 'receiving';
+  fileName: string;
+  bytesTransferred: number;
+  totalBytes: number;
+};
+
+export type TransferRequest = {
+  transferId: string;
+  fileName: string;
+  fileSize: number;
+  expiresInMs: number;
+};
+
+export type TransferResult = {
+  peerId: string;
+  transferId: string;
+  fileName: string;
+  direction: 'sending' | 'receiving';
+  ok: boolean;
+  file?: Blob;
+  reason?: string;
+};
+
+export type OfflineTransferRequest = {
+  transferId: string;
+  to: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  totalChunks: number;
+  expiresInMs: number;
+};
+
+type IncomingTransfer = {
+  peerId: string;
+  transferId: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  totalChunks: number;
+  accepted: boolean;
+  nextChunkIndex: number;
+  bytesReceived: number;
+  hasher: ReturnType<typeof createFileHasher>;
+  pendingParts: ArrayBuffer[];
+  pendingBytes: number;
+  blobs: Blob[];
+};
+
+type OutgoingTransfer = {
+  peerId: string;
+  fileName: string;
+  resolve: (accepted: boolean) => void;
+  cancelled: boolean;
+  timeoutId: number;
+};
+
+type ManagerOptions = {
+  localPeerId: string;
+  sendSignal: (type: 'offer' | 'answer' | 'candidate', payload: Record<string, unknown>, to: string) => void;
+  onStatusChange: (status: string, connected: boolean) => void;
+  onPeerStateChange?: (peerId: string) => void;
+  onTransferRequest?: (peerId: string, transfer: TransferRequest) => void;
+  onTransferProgress?: (progress: TransferProgress) => void;
+  onTransferDecision?: (decision: { peerId: string; transferId: string; fileName: string; accepted: boolean }) => void;
+  onTransferCancelled?: (peerId: string) => void;
+  onTransferPending?: (pending: { peerId: string; transferId: string; fileName: string; expiresInMs: number }) => void;
+  onTransferExpired?: (peerId: string, transferId: string) => void;
+  onTransferComplete?: (result: TransferResult) => void;
+  onTextReceived?: (peerId: string, text: string) => void;
+  onTextDelivered?: (peerId: string, messageId: string) => void;
+  getPeerName?: (peerId: string) => string;
+  isPeerOnline?: (peerId: string) => boolean;
+  requestOfflineTransfer?: (request: OfflineTransferRequest) => Promise<boolean>;
+  cancelOfflineTransfer?: (peerId: string) => void;
+};
+
+// Au-delà de ce volume, les chunks reçus sont regroupés dans un Blob que le navigateur peut garder sur disque.
+const BLOB_BATCH_BYTES = 16 * 1024 * 1024;
+const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+const BUFFER_LOW_THRESHOLD_BYTES = 1024 * 1024;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
 export class PeerConnectionManager {
   private readonly peerConnections = new Map<string, RTCPeerConnection>();
   private readonly dataChannels = new Map<string, RTCDataChannel>();
@@ -23,136 +117,74 @@ export class PeerConnectionManager {
   private readonly pendingChunkAcks = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
   private readonly pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
   private readonly pendingChunkHeaders = new Map<string, Array<Extract<TransferMessage, { type: 'chunk-header' }>>>();
-  private readonly onStatusChange: (status: string, connected: boolean) => void;
-  private readonly onPeerReady?: (peerId: string) => void;
-  private readonly onTransferRequest?: (peerId: string, transfer: { transferId: string; fileName: string; fileSize: number; totalChunks: number; hash: string; expiresInMs: number }) => void;
-  private readonly onTransferProgress?: (progress: { peerId: string; direction: 'sending' | 'receiving'; fileName: string; bytesTransferred: number; totalBytes: number }) => void;
-  private readonly onTransferDecision?: (decision: { peerId: string; transferId: string; fileName: string; accepted: boolean }) => void;
-  private readonly onTransferCancelled?: (peerId: string) => void;
-  private readonly onTransferPending?: (pending: { peerId: string; transferId: string; fileName: string; expiresInMs: number }) => void;
-  private readonly onTransferExpired?: (peerId: string, transferId: string) => void;
-  private readonly onTextReceived?: (peerId: string, text: string) => void;
-  private readonly onTextDelivered?: (peerId: string, messageId: string) => void;
-  private readonly getPeerName?: (peerId: string) => string;
-  private readonly sendSignal: (type: 'offer' | 'answer' | 'candidate', payload: Record<string, unknown>, to: string) => void;
-  private readonly localPeerId: string;
-  private readonly requestOfflineTransfer?: (request: { transferId: string; to: string; fileName: string; fileSize: number; mimeType: string; totalChunks: number; hash: string; expiresInMs: number }) => Promise<boolean>;
-  private readonly cancelOfflineTransfer?: (peerId: string) => void;
   private readonly approvedOfflineTransfers = new Set<string>();
-  private readonly pendingTransfers = new Map<string, { fileName: string; mimeType: string; totalChunks: number; chunks: Map<number, Uint8Array>; hash: string; bytesReceived: number; fileSize: number; accepted: boolean; peerId: string; transferId: string }>();
+  private readonly incomingTransfers = new Map<string, IncomingTransfer>();
+  // Une seule demande sortante est active par pair : les fichiers multiples sont envoyés l’un après l’autre.
+  private readonly outgoingTransfers = new Map<string, OutgoingTransfer>();
   private readonly fileTransferProtocol = new FileTransferProtocol();
-  // Une seule demande sortante est conservée par pair dans cette première version.
-  private readonly outgoingTransfers = new Map<string, { peerId: string; fileName: string; resolve: (accepted: boolean) => void; cancelled: boolean; timeoutId: number }>();
+  private readonly options: ManagerOptions;
+  private readonly localPeerId: string;
 
-  constructor(options: {
-    localPeerId: string;
-    sendSignal: (type: 'offer' | 'answer' | 'candidate', payload: Record<string, unknown>, to: string) => void;
-    onStatusChange: (status: string, connected: boolean) => void;
-    onPeerReady?: (peerId: string) => void;
-    onTransferRequest?: (peerId: string, transfer: { transferId: string; fileName: string; fileSize: number; totalChunks: number; hash: string; expiresInMs: number }) => void;
-    onTransferProgress?: (progress: { peerId: string; direction: 'sending' | 'receiving'; fileName: string; bytesTransferred: number; totalBytes: number }) => void;
-    onTransferDecision?: (decision: { peerId: string; transferId: string; fileName: string; accepted: boolean }) => void;
-    onTransferCancelled?: (peerId: string) => void;
-    onTransferPending?: (pending: { peerId: string; transferId: string; fileName: string; expiresInMs: number }) => void;
-    onTransferExpired?: (peerId: string, transferId: string) => void;
-    onTextReceived?: (peerId: string, text: string) => void;
-    onTextDelivered?: (peerId: string, messageId: string) => void;
-    getPeerName?: (peerId: string) => string;
-    requestOfflineTransfer?: (request: { transferId: string; to: string; fileName: string; fileSize: number; mimeType: string; totalChunks: number; hash: string; expiresInMs: number }) => Promise<boolean>;
-    cancelOfflineTransfer?: (peerId: string) => void;
-  }) {
+  constructor(options: ManagerOptions) {
+    this.options = options;
     this.localPeerId = options.localPeerId;
-    this.sendSignal = options.sendSignal;
-    this.onStatusChange = options.onStatusChange;
-    this.onPeerReady = options.onPeerReady;
-    this.onTransferRequest = options.onTransferRequest;
-    this.onTransferProgress = options.onTransferProgress;
-    this.onTransferDecision = options.onTransferDecision;
-    this.onTransferCancelled = options.onTransferCancelled;
-    this.onTransferPending = options.onTransferPending;
-    this.onTransferExpired = options.onTransferExpired;
-    this.onTextReceived = options.onTextReceived;
-    this.onTextDelivered = options.onTextDelivered;
-    this.getPeerName = options.getPeerName;
-    this.requestOfflineTransfer = options.requestOfflineTransfer;
-    this.cancelOfflineTransfer = options.cancelOfflineTransfer;
   }
 
   public hasConnection(peerId: string) {
     return this.peerConnections.has(peerId);
   }
 
+  /** Le canal direct est ouvert : un envoi peut partir immédiatement. */
+  public isReady(peerId: string) {
+    return this.dataChannels.get(peerId)?.readyState === 'open';
+  }
+
   public acceptTransfer(peerId: string, transferId: string) {
-    const key = this.transferKey(peerId, transferId);
-    const transfer = this.pendingTransfers.get(key);
+    const transfer = this.incomingTransfers.get(this.transferKey(peerId, transferId));
     if (!transfer) {
       return;
     }
 
     transfer.accepted = true;
     // La réponse est envoyée avant que l’émetteur puisse commencer les chunks.
-    this.sendTransferResponse(peerId, transfer.transferId, transfer.fileName, true);
-    this.onTransferProgress?.({
-      peerId,
-      direction: 'receiving',
-      fileName: transfer.fileName,
-      bytesTransferred: 0,
-      totalBytes: transfer.fileSize
-    });
-    this.onStatusChange(`Transfert accepté : ${transfer.fileName}`, true);
+    this.sendMessage(peerId, { type: 'response', transferId, fileName: transfer.fileName, accepted: true });
+    this.emitProgress(peerId, 'receiving', transfer.fileName, 0, transfer.fileSize);
+    this.status(`Réception de ${transfer.fileName}…`, true);
   }
 
   public rejectTransfer(peerId: string, transferId: string) {
     const key = this.transferKey(peerId, transferId);
-    const transfer = this.pendingTransfers.get(key);
+    const transfer = this.incomingTransfers.get(key);
     if (!transfer) {
       return;
     }
 
-    this.pendingTransfers.delete(key);
+    this.incomingTransfers.delete(key);
     // Le refus est également transmis afin que l’émetteur arrête proprement son envoi.
-    this.sendTransferResponse(peerId, transfer.transferId, transfer.fileName, false);
-    this.onStatusChange(`Transfert refusé : ${transfer.fileName}`, false);
+    this.sendMessage(peerId, { type: 'response', transferId, fileName: transfer.fileName, accepted: false });
+    this.status(`Vous avez refusé ${transfer.fileName}`, false);
   }
 
   public cancelTransfer(peerId: string) {
-    this.cancelOfflineTransfer?.(peerId);
-    const channel = this.dataChannels.get(peerId);
+    this.options.cancelOfflineTransfer?.(peerId);
     const outgoingEntry = Array.from(this.outgoingTransfers.entries()).find(([, transfer]) => transfer.peerId === peerId);
-    const outgoing = outgoingEntry?.[1];
-    const incomingEntry = Array.from(this.pendingTransfers.entries()).find(([, transfer]) => transfer.peerId === peerId && transfer.accepted);
+    const incoming = Array.from(this.incomingTransfers.values()).find((transfer) => transfer.peerId === peerId && transfer.accepted);
 
-    if (outgoing) {
+    if (outgoingEntry) {
+      const [transferId, outgoing] = outgoingEntry;
       outgoing.cancelled = true;
-      this.outgoingTransfers.delete(outgoingEntry[0]);
+      this.outgoingTransfers.delete(transferId);
       window.clearTimeout(outgoing.timeoutId);
       outgoing.resolve(false);
-      this.resolvePendingChunkAcks(outgoingEntry[0]);
-
-      if (channel?.readyState === 'open') {
-        const message: TransferMessage = {
-          type: 'cancel',
-          transferId: outgoingEntry[0],
-          fileName: outgoing.fileName
-        };
-        channel.send(this.fileTransferProtocol.serializeMessage(message));
-      }
-    } else if (incomingEntry) {
-      const [key, incoming] = incomingEntry;
-      this.pendingTransfers.delete(key);
-
-      if (channel?.readyState === 'open') {
-        const message: TransferMessage = {
-          type: 'cancel',
-          transferId: incoming.transferId,
-          fileName: incoming.fileName
-        };
-        channel.send(this.fileTransferProtocol.serializeMessage(message));
-      }
+      this.resolvePendingChunkAcks(transferId);
+      this.sendMessage(peerId, { type: 'cancel', transferId, fileName: outgoing.fileName });
+    } else if (incoming) {
+      this.incomingTransfers.delete(this.transferKey(peerId, incoming.transferId));
+      this.sendMessage(peerId, { type: 'cancel', transferId: incoming.transferId, fileName: incoming.fileName });
     }
 
-    this.onTransferCancelled?.(peerId);
-    this.onStatusChange('Transfert annulé', false);
+    this.options.onTransferCancelled?.(peerId);
+    this.status('Transfert annulé', false);
   }
 
   public async initiate(peerId: string) {
@@ -163,11 +195,11 @@ export class PeerConnectionManager {
     // On crée la connexion WebRTC et on envoie immédiatement une offer SDP.
     const connection = this.create(peerId, true);
     this.peerConnections.set(peerId, connection);
+    this.options.onPeerStateChange?.(peerId);
 
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
-    this.sendSignal('offer', { sdp: offer.sdp }, peerId);
-    this.onStatusChange(`Négociation WebRTC en cours avec ${this.peerDisplayName(peerId)}`, true);
+    this.options.sendSignal('offer', { sdp: offer.sdp }, peerId);
   }
 
   /** Envoie un texte en un seul message ; le destinataire l’affiche sans demande d’acceptation. */
@@ -179,184 +211,123 @@ export class PeerConnectionManager {
       throw new Error('Le texte est trop long (60 Ko maximum). Envoyez-le plutôt comme fichier.');
     }
 
-    this.onStatusChange('Connexion au destinataire…', true);
-    await this.initiate(peerId);
-    const channel = await this.waitForOpenChannel(peerId);
+    const channel = await this.connect(peerId);
     if (!channel) {
-      throw new Error('Le destinataire est injoignable. Vérifiez qu’il a GeniusSend ouvert.');
+      throw new Error(`${this.peerDisplayName(peerId)} est injoignable. Vérifiez que GeniusSend est ouvert sur cet appareil.`);
     }
 
-    const message: TransferMessage = {
-      type: 'text',
-      messageId: this.createTransferId(),
-      text
-    };
+    const messageId = this.createTransferId();
     await this.waitForBuffer(channel);
-    channel.send(this.fileTransferProtocol.serializeMessage(message));
-    this.onStatusChange(`Texte envoyé à ${this.peerDisplayName(peerId)}`, true);
+    this.sendOn(channel, { type: 'text', messageId, text });
+    this.status(`Texte envoyé à ${this.peerDisplayName(peerId)}`, true);
+    return messageId;
   }
 
+  /**
+   * Envoie un fichier en le lisant chunk par chunk : la mémoire utilisée reste constante,
+   * quelle que soit la taille du fichier. Renvoie false si le transfert n’a pas eu lieu.
+   */
   public async sendFile(peerId: string, file: File, forceOfflineRequest = false) {
     if (file.size > MAX_FILE_SIZE_BYTES) {
       throw new Error('La taille maximale autorisée est de 10 Go.');
     }
-    this.onStatusChange('Connexion au destinataire…', true);
-    const fileBuffer = await file.arrayBuffer();
-    const fileHash = await this.fileTransferProtocol.computeHash(fileBuffer);
-    const chunks = this.fileTransferProtocol.chunk(fileBuffer);
+
+    const peerName = this.peerDisplayName(peerId);
     const transferId = this.createTransferId();
-    let channel = forceOfflineRequest ? null : await this.waitForOpenChannel(peerId);
+    const totalChunks = this.fileTransferProtocol.countChunks(file.size);
+    const mimeType = file.type || 'application/octet-stream';
+    let channel = forceOfflineRequest ? null : await this.connect(peerId);
     let acceptedOffline = false;
 
-    if (!channel && this.requestOfflineTransfer) {
-      this.onTransferPending?.({ peerId, transferId, fileName: file.name, expiresInMs: TRANSFER_ACCEPT_TIMEOUT_MS });
-      acceptedOffline = await this.requestOfflineTransfer({
+    if (!channel && this.options.requestOfflineTransfer) {
+      this.options.onTransferPending?.({ peerId, transferId, fileName: file.name, expiresInMs: TRANSFER_ACCEPT_TIMEOUT_MS });
+      acceptedOffline = await this.options.requestOfflineTransfer({
         transferId,
         to: peerId,
         fileName: file.name,
         fileSize: file.size,
-        mimeType: file.type || 'application/octet-stream',
-        totalChunks: chunks.length,
-        hash: fileHash,
+        mimeType,
+        totalChunks,
         expiresInMs: TRANSFER_ACCEPT_TIMEOUT_MS
       });
       if (!acceptedOffline) {
-        this.onStatusChange('Demande refusée, annulée ou expirée', false);
-        return;
+        this.status('Demande refusée, annulée ou expirée', false);
+        return false;
       }
-      await this.initiate(peerId);
-      channel = await this.waitForOpenChannel(peerId);
+      channel = await this.connect(peerId);
     }
 
     if (!channel) {
-      this.onStatusChange('Le canal de transfert n’est pas disponible', false);
-      return;
+      this.status(`${peerName} est injoignable. Vérifiez que GeniusSend est ouvert sur cet appareil.`, false);
+      return false;
     }
 
-    // Metadata initiale : nom du fichier, taille, nombre de chunks et hash final.
-    const initMessage: TransferMessage = {
+    this.sendOn(channel, {
       type: 'init',
       transferId,
       fileName: file.name,
-      mimeType: file.type || 'application/octet-stream',
+      mimeType,
       acceptTimeoutMs: TRANSFER_ACCEPT_TIMEOUT_MS,
       fileSize: file.size,
-      totalChunks: chunks.length,
-      hash: fileHash
-    };
-
-    channel.send(this.fileTransferProtocol.serializeMessage(initMessage));
-    const recipientName = this.getPeerName?.(peerId) || 'le destinataire';
-    this.onStatusChange(`Demande envoyée à ${recipientName} : ${file.name}`, true);
-
-    // On attend l’autorisation explicite du destinataire avant d’envoyer des données.
-    const accepted = acceptedOffline || await new Promise<boolean>((resolve) => {
-      const timeoutId = window.setTimeout(() => {
-        if (this.outgoingTransfers.get(transferId)?.resolve === resolve) {
-          this.outgoingTransfers.delete(transferId);
-          const cancelMessage: TransferMessage = {
-            type: 'cancel',
-            transferId,
-            fileName: file.name,
-            reason: 'expired'
-          };
-          if (channel.readyState === 'open') {
-            channel.send(this.fileTransferProtocol.serializeMessage(cancelMessage));
-          }
-          this.onTransferExpired?.(peerId, transferId);
-          resolve(false);
-        }
-      }, TRANSFER_ACCEPT_TIMEOUT_MS);
-
-      this.outgoingTransfers.set(transferId, { peerId, fileName: file.name, resolve, cancelled: false, timeoutId });
-      this.onTransferPending?.({ peerId, transferId, fileName: file.name, expiresInMs: TRANSFER_ACCEPT_TIMEOUT_MS });
+      totalChunks
     });
 
+    // On attend l’autorisation explicite du destinataire avant d’envoyer des données.
+    const accepted = acceptedOffline || await this.waitForAcceptance(peerId, transferId, file.name, channel);
     if (!accepted) {
-      this.onStatusChange('Transfert refusé ou délai dépassé', false);
-      return;
+      this.outgoingTransfers.delete(transferId);
+      return false;
     }
 
     if (acceptedOffline) {
       this.outgoingTransfers.set(transferId, { peerId, fileName: file.name, resolve: () => undefined, cancelled: false, timeoutId: 0 });
     }
 
-    this.onTransferProgress?.({
-      peerId,
-      direction: 'sending',
-      fileName: file.name,
-      bytesTransferred: 0,
-      totalBytes: file.size
-    });
+    this.emitProgress(peerId, 'sending', file.name, 0, file.size);
+    this.status(`Envoi de ${file.name} à ${peerName}…`, true);
+    const hasher = createFileHasher();
+    let bytesSent = 0;
 
-    let bytesQueued = 0;
-    let bytesConfirmed = 0;
-
-    for (let index = 0; index < chunks.length; index += 1) {
-      const outgoing = this.outgoingTransfers.get(transferId);
-      if (!outgoing || outgoing.cancelled) {
-        this.outgoingTransfers.delete(transferId);
-        return;
-      }
-
-      const chunk = chunks[index];
-      const header: TransferMessage = {
-        type: 'chunk-header',
-        transferId,
-        chunkIndex: index,
-        totalChunks: chunks.length,
-        fileName: file.name,
-        hash: fileHash,
-        byteLength: chunk.byteLength
-      };
-
-      // L’en-tête reste en JSON, mais le contenu du fichier passe en binaire natif.
-      await this.waitForBuffer(channel);
-      channel.send(this.fileTransferProtocol.serializeMessage(header));
-      await this.waitForBuffer(channel);
-      const isWindowEnd = (index + 1) % TRANSFER_ACK_WINDOW === 0 || index === chunks.length - 1;
-      const acknowledgement = isWindowEnd ? this.waitForChunkAcknowledgement(transferId, index) : null;
-      channel.send(chunk);
-      bytesQueued += chunk.byteLength;
-      if (acknowledgement) {
-        await acknowledgement;
-        if (!this.outgoingTransfers.has(transferId)) {
-          return;
+    try {
+      for (let index = 0; index < totalChunks; index += 1) {
+        if (this.outgoingTransfers.get(transferId)?.cancelled !== false) {
+          return false;
         }
-        bytesConfirmed = bytesQueued;
-        this.onTransferProgress?.({
-          peerId,
-          direction: 'sending',
-          fileName: file.name,
-          bytesTransferred: Math.min(file.size, bytesConfirmed),
-          totalBytes: file.size
-        });
-        this.onStatusChange(`Transfert confirmé : chunk ${index + 1}/${chunks.length}`, true);
+
+        const chunk = await this.fileTransferProtocol.readChunk(file, index);
+        hasher.update(new Uint8Array(chunk));
+
+        // L’en-tête reste en JSON, mais le contenu du fichier passe en binaire natif.
+        await this.waitForBuffer(channel);
+        this.sendOn(channel, { type: 'chunk-header', transferId, chunkIndex: index, byteLength: chunk.byteLength });
+        const isWindowEnd = (index + 1) % TRANSFER_ACK_WINDOW === 0 || index === totalChunks - 1;
+        const acknowledgement = isWindowEnd ? this.waitForChunkAcknowledgement(transferId, index) : null;
+        // Si l’envoi échoue avant l’attente, ce rejet ne doit pas remonter comme erreur non gérée.
+        acknowledgement?.catch(() => undefined);
+        channel.send(chunk);
+        bytesSent += chunk.byteLength;
+
+        if (acknowledgement) {
+          await acknowledgement;
+          if (!this.outgoingTransfers.has(transferId)) {
+            return false;
+          }
+          this.emitProgress(peerId, 'sending', file.name, bytesSent, file.size);
+        }
       }
+
+      if (totalChunks === 0) {
+        this.emitProgress(peerId, 'sending', file.name, 0, 0);
+      }
+
+      // Fin de transfert : le destinataire compare ce hash avec celui qu’il a calculé en recevant.
+      await this.waitForBuffer(channel);
+      this.sendOn(channel, { type: 'end', transferId, fileName: file.name, hash: toHex(hasher.digest()) });
+      this.status(`${file.name} envoyé, vérification par ${peerName}…`, true);
+      return true;
+    } finally {
+      this.outgoingTransfers.delete(transferId);
     }
-
-    if (chunks.length === 0) {
-      this.onTransferProgress?.({
-        peerId,
-        direction: 'sending',
-        fileName: file.name,
-        bytesTransferred: 0,
-        totalBytes: 0
-      });
-    }
-
-    // Fin de transfert : le destinataire peut reconstruire et vérifier le hash final.
-    const endMessage: TransferMessage = {
-      type: 'end',
-      transferId,
-      fileName: file.name,
-      hash: fileHash,
-      ok: true
-    };
-
-    await this.waitForBuffer(channel);
-    channel.send(this.fileTransferProtocol.serializeMessage(endMessage));
-    this.outgoingTransfers.delete(transferId);
   }
 
   public async handleIncoming(message: SignalPayload) {
@@ -365,15 +336,18 @@ export class PeerConnectionManager {
     }
 
     const fromPeer = message.from;
+    let connection = this.peerConnections.get(fromPeer);
 
-    if (!this.peerConnections.has(fromPeer)) {
-      const connection = this.create(fromPeer, false);
-      this.peerConnections.set(fromPeer, connection);
+    // Une nouvelle offre alors qu’une session existe déjà : l’autre appareil a redémarré la connexion.
+    if (message.type === 'offer' && connection?.remoteDescription) {
+      this.discardConnection(fromPeer);
+      connection = undefined;
     }
 
-    const connection = this.peerConnections.get(fromPeer);
     if (!connection) {
-      return;
+      connection = this.create(fromPeer, false);
+      this.peerConnections.set(fromPeer, connection);
+      this.options.onPeerStateChange?.(fromPeer);
     }
 
     try {
@@ -382,8 +356,7 @@ export class PeerConnectionManager {
         await this.flushIceCandidates(fromPeer, connection);
         const answer = await connection.createAnswer();
         await connection.setLocalDescription(answer);
-        this.sendSignal('answer', { sdp: answer.sdp }, fromPeer);
-        this.onStatusChange(`Réponse WebRTC envoyée à ${fromPeer}`, true);
+        this.options.sendSignal('answer', { sdp: answer.sdp }, fromPeer);
         return;
       }
 
@@ -406,14 +379,18 @@ export class PeerConnectionManager {
         await connection.addIceCandidate(new RTCIceCandidate(candidate));
       }
     } catch (error) {
-      console.error('Unable to process incoming WebRTC signal:', error);
-      this.onStatusChange('Échec de la connexion WebRTC', false);
+      console.error('[GeniusSend] signal WebRTC non traité', error);
+      this.status(`Connexion impossible avec ${this.peerDisplayName(fromPeer)}`, false);
     }
+  }
+
+  public approveOfflineTransfer(peerId: string, transferId: string) {
+    this.approvedOfflineTransfers.add(this.transferKey(peerId, transferId));
   }
 
   private create(peerId: string, isInitiator: boolean) {
     if (!window.RTCPeerConnection) {
-      throw new Error('WebRTC non supporté par ce navigateur');
+      throw new Error('Ce navigateur ne permet pas les connexions directes (WebRTC).');
     }
 
     const connection = new RTCPeerConnection({
@@ -424,49 +401,51 @@ export class PeerConnectionManager {
 
     // Seul l’initiateur crée le canal ; le destinataire recevra le canal distant.
     if (isInitiator) {
-      const channel = connection.createDataChannel('geniussend');
-      this.configureChannel(peerId, channel);
+      this.configureChannel(peerId, connection.createDataChannel('geniussend'));
     }
 
     connection.onicecandidate = (event) => {
       if (event.candidate) {
-        console.debug('[GeniusSend] ICE candidate envoyé', { peerId, candidate: event.candidate.candidate });
-        this.sendSignal('candidate', { candidate: event.candidate.toJSON() }, peerId);
+        this.options.sendSignal('candidate', { candidate: event.candidate.toJSON() }, peerId);
       }
     };
 
     connection.ondatachannel = (event) => {
-      this.configureChannel(peerId, event.channel);
+      if (this.peerConnections.get(peerId) === connection) {
+        this.configureChannel(peerId, event.channel);
+      }
     };
 
     connection.onconnectionstatechange = () => {
+      // Une connexion remplacée ne doit plus influencer l’état du pair.
+      if (this.peerConnections.get(peerId) !== connection) {
+        return;
+      }
+
       console.info('[GeniusSend] état WebRTC', { peerId, state: connection.connectionState });
       if (connection.connectionState === 'connected') {
         this.reconnectAttempts.delete(peerId);
-        this.onStatusChange(`Connexion WebRTC active avec ${this.peerDisplayName(peerId)}`, true);
-        this.onPeerReady?.(peerId);
+        this.options.onPeerStateChange?.(peerId);
       }
 
+      // « disconnected » se rétablit souvent seul : on ne coupe qu’après quelques secondes.
       if (connection.connectionState === 'disconnected') {
-        this.onStatusChange('Connexion WebRTC interrompue, reconnexion…', false);
-        this.scheduleReconnect(peerId, connection);
+        window.setTimeout(() => {
+          if (this.peerConnections.get(peerId) === connection && connection.connectionState === 'disconnected') {
+            this.handleConnectionLost(peerId);
+          }
+        }, 5_000);
       }
 
-      if (connection.connectionState === 'failed' || connection.connectionState === 'closed') {
-        this.onStatusChange('Connexion WebRTC échouée', false);
-        this.scheduleReconnect(peerId, connection);
+      if (connection.connectionState === 'failed') {
+        this.handleConnectionLost(peerId);
       }
     };
 
     connection.oniceconnectionstatechange = () => {
-      console.info('[GeniusSend] état ICE', { peerId, state: connection.iceConnectionState });
-      if (connection.iceConnectionState === 'failed') {
-        this.onStatusChange('ICE échoué : réseau ou pare-feu', false);
+      if (this.peerConnections.get(peerId) === connection && connection.iceConnectionState === 'failed') {
+        this.status(`Impossible de joindre ${this.peerDisplayName(peerId)}. Vérifiez que les deux appareils sont sur le même réseau.`, false);
       }
-    };
-
-    connection.onicegatheringstatechange = () => {
-      console.debug('[GeniusSend] collecte ICE', { peerId, state: connection.iceGatheringState });
     };
 
     return connection;
@@ -474,26 +453,24 @@ export class PeerConnectionManager {
 
   private configureChannel(peerId: string, channel: RTCDataChannel) {
     channel.binaryType = 'arraybuffer';
-    console.info('[GeniusSend] RTCDataChannel configuré', { peerId, label: channel.label });
 
     channel.onopen = () => {
+      if (this.dataChannels.get(peerId) !== channel) {
+        return;
+      }
       console.info('[GeniusSend] RTCDataChannel ouvert', { peerId });
-      this.onStatusChange(`Connexion WebRTC active avec ${this.peerDisplayName(peerId)}`, true);
-      this.onPeerReady?.(peerId);
+      this.options.onPeerStateChange?.(peerId);
     };
 
     channel.onclose = () => {
-      console.info('[GeniusSend] RTCDataChannel fermé', { peerId });
-      this.onStatusChange('Connexion WebRTC fermée', false);
-      const connection = this.peerConnections.get(peerId);
-      if (connection) {
-        this.scheduleReconnect(peerId, connection);
+      if (this.dataChannels.get(peerId) === channel) {
+        console.info('[GeniusSend] RTCDataChannel fermé', { peerId });
+        this.handleConnectionLost(peerId);
       }
     };
 
     channel.onerror = (event) => {
       console.error('[GeniusSend] erreur RTCDataChannel', { peerId, event });
-      this.onStatusChange('Erreur WebRTC', false);
     };
 
     channel.onmessage = (event) => {
@@ -505,6 +482,65 @@ export class PeerConnectionManager {
     };
 
     this.dataChannels.set(peerId, channel);
+  }
+
+  /** Ouvre (ou réutilise) le canal direct vers un pair. */
+  private async connect(peerId: string) {
+    if (!this.isReady(peerId)) {
+      this.status(`Connexion à ${this.peerDisplayName(peerId)}…`, true);
+    }
+    await this.initiate(peerId);
+    return this.waitForOpenChannel(peerId);
+  }
+
+  private discardConnection(peerId: string) {
+    const connection = this.peerConnections.get(peerId);
+    const channel = this.dataChannels.get(peerId);
+    this.peerConnections.delete(peerId);
+    this.dataChannels.delete(peerId);
+    this.pendingIceCandidates.delete(peerId);
+    this.pendingChunkHeaders.delete(peerId);
+    channel?.close();
+    connection?.close();
+    this.options.onPeerStateChange?.(peerId);
+  }
+
+  private handleConnectionLost(peerId: string) {
+    if (!this.peerConnections.has(peerId)) {
+      return;
+    }
+
+    const peerName = this.peerDisplayName(peerId);
+    const lostError = new Error(`Connexion perdue avec ${peerName} : transfert interrompu.`);
+    let interrupted = false;
+
+    for (const transfer of Array.from(this.incomingTransfers.values())) {
+      if (transfer.peerId !== peerId) continue;
+      if (transfer.accepted) {
+        this.failIncomingTransfer(transfer, 'la connexion a été perdue');
+      } else {
+        this.incomingTransfers.delete(this.transferKey(peerId, transfer.transferId));
+        this.options.onTransferExpired?.(peerId, transfer.transferId);
+      }
+    }
+
+    for (const [transferId, outgoing] of this.outgoingTransfers) {
+      if (outgoing.peerId !== peerId) continue;
+      interrupted = true;
+      window.clearTimeout(outgoing.timeoutId);
+      outgoing.resolve(false);
+      this.rejectPendingChunkAcks(transferId, lostError);
+    }
+
+    this.discardConnection(peerId);
+    if (interrupted) {
+      this.status(lostError.message, false);
+    }
+
+    // Les deux appareils détectent la coupure : seul celui au plus petit identifiant relance, pour éviter deux offres croisées.
+    if (this.localPeerId < peerId) {
+      this.scheduleReconnect(peerId);
+    }
   }
 
   private async flushIceCandidates(peerId: string, connection: RTCPeerConnection) {
@@ -533,27 +569,27 @@ export class PeerConnectionManager {
     return null;
   }
 
-  private scheduleReconnect(peerId: string, connection: RTCPeerConnection) {
-    if (this.reconnectTimers.has(peerId)) {
+  private scheduleReconnect(peerId: string) {
+    if (this.reconnectTimers.has(peerId) || !(this.options.isPeerOnline?.(peerId) ?? true)) {
       return;
     }
 
     const attempt = (this.reconnectAttempts.get(peerId) ?? 0) + 1;
-    if (attempt > 5) {
-      this.onStatusChange('Reconnexion WebRTC impossible', false);
+    if (attempt > MAX_RECONNECT_ATTEMPTS) {
+      // La connexion sera recréée à la demande lors du prochain envoi.
+      this.reconnectAttempts.delete(peerId);
       return;
     }
 
     this.reconnectAttempts.set(peerId, attempt);
-    connection.close();
-    this.peerConnections.delete(peerId);
-    this.dataChannels.delete(peerId);
-
     const timer = window.setTimeout(() => {
       this.reconnectTimers.delete(peerId);
+      if (this.peerConnections.has(peerId) || !(this.options.isPeerOnline?.(peerId) ?? true)) {
+        return;
+      }
       void this.initiate(peerId).catch((error) => {
         console.error('[GeniusSend] échec de reconnexion WebRTC', { peerId, error });
-        this.scheduleReconnect(peerId, connection);
+        this.scheduleReconnect(peerId);
       });
     }, 1_000 * attempt);
 
@@ -562,12 +598,12 @@ export class PeerConnectionManager {
 
   private async handleDataChannelMessage(peerId: string, payload: Blob | ArrayBuffer | string) {
     if (typeof payload !== 'string') {
-      const binaryPayload = await new Response(payload).arrayBuffer();
+      const binaryPayload = payload instanceof ArrayBuffer ? payload : await new Response(payload).arrayBuffer();
       const headers = this.pendingChunkHeaders.get(peerId) ?? [];
       const header = headers.shift();
 
       if (!header) {
-        this.onStatusChange('Chunk binaire reçu sans en-tête', false);
+        console.warn('[GeniusSend] chunk binaire reçu sans en-tête', { peerId });
         return;
       }
 
@@ -576,110 +612,109 @@ export class PeerConnectionManager {
       } else {
         this.pendingChunkHeaders.set(peerId, headers);
       }
-      await this.handleChunkData(peerId, header, new Uint8Array(binaryPayload));
+      this.handleChunkData(peerId, header, binaryPayload);
       return;
     }
 
     let message: TransferMessage;
 
     try {
-      // On lit le message comme du JSON texte pour garder un format portable entre navigateurs.
-      const rawMessage = typeof payload === 'string' ? payload : await new Response(payload).text();
-      message = this.fileTransferProtocol.deserializeMessage(rawMessage) as TransferMessage;
+      message = this.fileTransferProtocol.deserializeMessage(payload) as TransferMessage;
     } catch (error) {
-      console.error('Message de transfert invalide reçu :', error);
-      this.onStatusChange('Message de transfert invalide', false);
+      console.error('[GeniusSend] message de transfert invalide', error);
       return;
     }
+
+    const peerName = this.peerDisplayName(peerId);
 
     // Un texte est remis directement, puis confirmé à l’expéditeur.
     if (message.type === 'text') {
       if (typeof message.text !== 'string' || !message.text || new TextEncoder().encode(message.text).byteLength > MAX_TEXT_BYTES) {
         return;
       }
-      this.onTextReceived?.(peerId, message.text);
-      this.sendTextAcknowledgement(peerId, message.messageId);
+      this.options.onTextReceived?.(peerId, message.text);
+      this.sendMessage(peerId, { type: 'text-ack', messageId: message.messageId });
       return;
     }
 
     if (message.type === 'text-ack') {
-      this.onTextDelivered?.(peerId, message.messageId);
+      this.options.onTextDelivered?.(peerId, message.messageId);
       return;
     }
 
     // Une demande de transfert commence par un message d'initialisation.
     if (message.type === 'init') {
       if (!Number.isSafeInteger(message.fileSize) || message.fileSize < 0 || message.fileSize > MAX_FILE_SIZE_BYTES) {
-        this.sendTransferResponse(peerId, message.transferId, message.fileName, false);
-        this.onStatusChange('Fichier refusé : la taille maximale est de 10 Go', false);
+        this.sendMessage(peerId, { type: 'response', transferId: message.transferId, fileName: message.fileName, accepted: false });
+        this.status('Fichier refusé : la taille maximale est de 10 Go', false);
         return;
       }
+
       const transferKey = this.transferKey(peerId, message.transferId);
       const preapproved = this.approvedOfflineTransfers.delete(transferKey);
-      const pending = {
+      this.incomingTransfers.set(transferKey, {
+        peerId,
+        transferId: message.transferId,
         fileName: message.fileName,
         mimeType: message.mimeType || 'application/octet-stream',
-        totalChunks: message.totalChunks,
-        chunks: new Map<number, Uint8Array>(),
-        hash: message.hash,
-        bytesReceived: 0,
         fileSize: message.fileSize,
+        totalChunks: message.totalChunks,
         accepted: preapproved,
-        peerId,
-        transferId: message.transferId
-      };
-        mimeType: message.mimeType,
+        nextChunkIndex: 0,
+        bytesReceived: 0,
+        hasher: createFileHasher(),
+        pendingParts: [],
+        pendingBytes: 0,
+        blobs: []
+      });
 
-      this.pendingTransfers.set(this.transferKey(peerId, message.transferId), pending);
       if (preapproved) {
-        this.sendTransferResponse(peerId, message.transferId, message.fileName, true);
-        this.onTransferProgress?.({ peerId, direction: 'receiving', fileName: message.fileName, bytesTransferred: 0, totalBytes: message.fileSize });
-        this.onStatusChange(`Transfert accepté : ${message.fileName}`, true);
+        this.sendMessage(peerId, { type: 'response', transferId: message.transferId, fileName: message.fileName, accepted: true });
+        this.emitProgress(peerId, 'receiving', message.fileName, 0, message.fileSize);
+        this.status(`Réception de ${message.fileName}…`, true);
         return;
       }
-      this.onTransferRequest?.(peerId, {
+
+      this.options.onTransferRequest?.(peerId, {
         transferId: message.transferId,
         fileName: message.fileName,
         fileSize: message.fileSize,
-        totalChunks: message.totalChunks,
-        hash: message.hash,
         expiresInMs: message.acceptTimeoutMs || TRANSFER_ACCEPT_TIMEOUT_MS
       });
-      const senderName = this.getPeerName?.(peerId) || 'Un appareil';
-      this.onStatusChange(`${senderName} demande le transfert de ${message.fileName}`, true);
+      this.status(`${peerName} veut vous envoyer ${message.fileName}`, true);
       return;
     }
 
     // Cette réponse débloque l’envoi côté émetteur.
     if (message.type === 'response') {
       const outgoing = this.outgoingTransfers.get(message.transferId);
-      if (outgoing && outgoing) {
+      if (outgoing) {
         // L’interface de l’expéditeur est informée dès l’arrivée de la décision.
-        this.onTransferDecision?.({ peerId, transferId: message.transferId, fileName: message.fileName, accepted: message.accepted });
-        this.onStatusChange(message.accepted ? `Transfert accepté : ${message.fileName}` : `Transfert refusé : ${message.fileName}`, message.accepted);
+        this.options.onTransferDecision?.({ peerId, transferId: message.transferId, fileName: message.fileName, accepted: message.accepted });
+        this.status(message.accepted ? `${peerName} a accepté ${message.fileName}` : `${peerName} a refusé ${message.fileName}`, message.accepted);
 
         if (!message.accepted) {
           this.outgoingTransfers.delete(message.transferId);
         }
 
         window.clearTimeout(outgoing.timeoutId);
-
         outgoing.resolve(message.accepted);
       }
       return;
     }
 
     if (message.type === 'chunk-ack') {
-      const acknowledgement = this.pendingChunkAcks.get(this.chunkAckKey(message.transferId, message.chunkIndex));
+      const key = this.chunkAckKey(message.transferId, message.chunkIndex);
+      const acknowledgement = this.pendingChunkAcks.get(key);
       if (acknowledgement) {
-        this.pendingChunkAcks.delete(this.chunkAckKey(message.transferId, message.chunkIndex));
+        this.pendingChunkAcks.delete(key);
         acknowledgement.resolve();
       }
       return;
     }
 
     if (message.type === 'cancel') {
-      this.pendingTransfers.delete(this.transferKey(peerId, message.transferId));
+      this.incomingTransfers.delete(this.transferKey(peerId, message.transferId));
       const headers = this.pendingChunkHeaders.get(peerId)?.filter((header) => header.transferId !== message.transferId) ?? [];
       if (headers.length > 0) {
         this.pendingChunkHeaders.set(peerId, headers);
@@ -697,11 +732,11 @@ export class PeerConnectionManager {
       }
 
       if (message.reason === 'expired') {
-        this.onTransferExpired?.(peerId, message.transferId);
-        this.onStatusChange('La demande de transfert a expiré', false);
+        this.options.onTransferExpired?.(peerId, message.transferId);
+        this.status('La demande de transfert a expiré', false);
       } else {
-        this.onTransferCancelled?.(peerId);
-        this.onStatusChange('Transfert annulé par l’expéditeur', false);
+        this.options.onTransferCancelled?.(peerId);
+        this.status(`${peerName} a annulé le transfert`, false);
       }
       return;
     }
@@ -713,181 +748,187 @@ export class PeerConnectionManager {
       return;
     }
 
-    // Les chunks ne sont stockés que si l'utilisateur a accepté le transfert.
-    if (message.type === 'chunk') {
-      await this.handleChunkData(peerId, message, Uint8Array.from(message.data));
+    if (message.type === 'end') {
+      const transfer = this.incomingTransfers.get(this.transferKey(peerId, message.transferId));
+      if (transfer?.accepted) {
+        this.finalizeTransfer(transfer, message.hash);
+      }
       return;
     }
 
-    if (message.type === 'end') {
-      const transfer = this.pendingTransfers.get(this.transferKey(peerId, message.transferId));
-      if (transfer && transfer.accepted) {
-        await this.finalizeTransfer(peerId, transfer);
-      }
+    // Confirmation finale du destinataire : le fichier est arrivé intact (ou non).
+    if (message.type === 'complete') {
+      this.options.onTransferComplete?.({
+        peerId,
+        transferId: message.transferId,
+        fileName: message.fileName,
+        direction: 'sending',
+        ok: message.ok,
+        reason: message.ok ? undefined : 'le fichier est arrivé incomplet ou corrompu'
+      });
+      this.status(message.ok ? `${message.fileName} bien reçu par ${peerName}` : `${peerName} a reçu un fichier incomplet`, message.ok);
     }
   }
 
-  public approveOfflineTransfer(peerId: string, transferId: string) {
-    this.approvedOfflineTransfers.add(this.transferKey(peerId, transferId));
-  }
-
-  private async handleChunkData(
-    peerId: string,
-    message: Extract<TransferMessage, { type: 'chunk-header' | 'chunk' }> ,
-    byteArray: Uint8Array
-  ) {
+  private handleChunkData(peerId: string, header: Extract<TransferMessage, { type: 'chunk-header' }>, chunk: ArrayBuffer) {
     // Les transferts sont indexés par pair ET transfert : ne jamais chercher avec peerId seul.
-    const transfer = this.pendingTransfers.get(this.transferKey(peerId, message.transferId));
+    const transfer = this.incomingTransfers.get(this.transferKey(peerId, header.transferId));
     if (!transfer || !transfer.accepted) {
       return;
     }
 
     // Un chunk déjà reçu ne doit pas être compté deux fois dans la progression.
-    if (!transfer.chunks.has(message.chunkIndex)) {
-      transfer.chunks.set(message.chunkIndex, byteArray);
-      transfer.bytesReceived += byteArray.byteLength;
+    if (header.chunkIndex < transfer.nextChunkIndex) {
+      return;
     }
 
-      console.debug('[GeniusSend] chunk reçu', {
-        peerId,
-        transferId: transfer.transferId,
-        chunkIndex: message.chunkIndex,
-        chunkBytes: byteArray.byteLength,
-        receivedChunks: transfer.chunks.size,
-        totalChunks: transfer.totalChunks
-      });
+    // Le canal est ordonné : un trou dans la séquence signifie que des données ont été perdues.
+    if (header.chunkIndex !== transfer.nextChunkIndex || transfer.bytesReceived + chunk.byteLength > transfer.fileSize) {
+      this.failIncomingTransfer(transfer, 'des morceaux du fichier manquent');
+      return;
+    }
 
-    this.onTransferProgress?.({
-      peerId,
-      direction: 'receiving',
-      fileName: transfer.fileName,
-      bytesTransferred: Math.min(transfer.fileSize, transfer.bytesReceived),
-      totalBytes: transfer.fileSize
-    });
-    this.onStatusChange(`Réception : ${transfer.bytesReceived}/${transfer.fileSize} octets`, true);
-    const windowComplete = (message.chunkIndex + 1) % TRANSFER_ACK_WINDOW === 0;
-    const transferComplete = message.chunkIndex === transfer.totalChunks - 1;
+    transfer.hasher.update(new Uint8Array(chunk));
+    transfer.pendingParts.push(chunk);
+    transfer.pendingBytes += chunk.byteLength;
+    transfer.bytesReceived += chunk.byteLength;
+    transfer.nextChunkIndex += 1;
+
+    if (transfer.pendingBytes >= BLOB_BATCH_BYTES) {
+      transfer.blobs.push(new Blob(transfer.pendingParts));
+      transfer.pendingParts = [];
+      transfer.pendingBytes = 0;
+    }
+
+    this.emitProgress(peerId, 'receiving', transfer.fileName, transfer.bytesReceived, transfer.fileSize);
+    const windowComplete = (header.chunkIndex + 1) % TRANSFER_ACK_WINDOW === 0;
+    const transferComplete = header.chunkIndex === transfer.totalChunks - 1;
     if (windowComplete || transferComplete) {
-      this.sendChunkAcknowledgement(peerId, transfer.transferId, message.chunkIndex);
+      this.sendMessage(peerId, { type: 'chunk-ack', transferId: transfer.transferId, chunkIndex: header.chunkIndex });
     }
   }
 
-  private async finalizeTransfer(peerId: string, transfer: { fileName: string; mimeType: string; totalChunks: number; chunks: Map<number, Uint8Array>; hash: string; bytesReceived: number; fileSize: number; accepted: boolean; transferId: string }) {
-    const missingChunks = Array.from({ length: transfer.totalChunks }, (_, index) => index)
-      .filter((index) => !transfer.chunks.has(index));
-
-    if (missingChunks.length > 0 || transfer.bytesReceived !== transfer.fileSize) {
-      console.error('[GeniusSend] réception incomplète', {
-        transferId: transfer.transferId,
-        receivedBytes: transfer.bytesReceived,
-        expectedBytes: transfer.fileSize,
-        missingChunks
-      });
-      this.onStatusChange(`Réception incomplète : ${missingChunks.length} chunk(s) manquant(s)`, false);
+  private finalizeTransfer(transfer: IncomingTransfer, expectedHash: string) {
+    if (transfer.nextChunkIndex !== transfer.totalChunks || transfer.bytesReceived !== transfer.fileSize) {
+      this.failIncomingTransfer(transfer, 'le fichier est incomplet');
       return;
     }
 
-    // Reconstitution du fichier final à partir des morceaux reçus.
-    const assembledChunks: ArrayBuffer[] = Array.from({ length: transfer.totalChunks }, (_, index) => {
-      const chunk = transfer.chunks.get(index);
-      if (!chunk) {
-        return new ArrayBuffer(0);
-      }
+    if (toHex(transfer.hasher.digest()) !== expectedHash) {
+      this.failIncomingTransfer(transfer, 'le fichier est corrompu');
+      return;
+    }
 
-      return chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer;
-    });
-
-    const rebuilt = this.fileTransferProtocol.assemble(assembledChunks);
-    const computedHash = await this.fileTransferProtocol.computeHash(rebuilt.buffer);
-
-    console.debug('[GeniusSend] hash vérifié', {
+    const file = new Blob([...transfer.blobs, ...transfer.pendingParts], { type: transfer.mimeType });
+    this.incomingTransfers.delete(this.transferKey(transfer.peerId, transfer.transferId));
+    this.sendMessage(transfer.peerId, { type: 'complete', transferId: transfer.transferId, fileName: transfer.fileName, ok: true });
+    this.emitProgress(transfer.peerId, 'receiving', transfer.fileName, transfer.fileSize, transfer.fileSize);
+    this.options.onTransferComplete?.({
+      peerId: transfer.peerId,
       transferId: transfer.transferId,
-      expectedHash: transfer.hash,
-      receivedHash: computedHash,
-      bytes: rebuilt.byteLength
-    });
-
-    if (computedHash !== transfer.hash) {
-      this.onStatusChange('Fichier corrompu : hash invalide', false);
-      this.pendingTransfers.delete(peerId);
-      return;
-    }
-
-    // Téléchargement automatique du fichier une fois vérifié.
-    const file = new Blob([rebuilt], { type: transfer.mimeType });
-    const url = URL.createObjectURL(file);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = transfer.fileName;
-    anchor.style.display = 'none';
-    document.body.append(anchor);
-    anchor.click();
-
-    // Les navigateurs mobiles peuvent démarrer la lecture du Blob après click().
-    // Révoquer l’URL dans le même tour de boucle annulait parfois le téléchargement.
-    window.setTimeout(() => {
-      URL.revokeObjectURL(url);
-      anchor.remove();
-    }, 60_000);
-
-    this.onTransferProgress?.({
-      peerId,
-      direction: 'receiving',
       fileName: transfer.fileName,
-      bytesTransferred: transfer.fileSize,
-      totalBytes: transfer.fileSize
+      direction: 'receiving',
+      ok: true,
+      file
     });
-
-    this.onStatusChange(`Transfert terminé : ${transfer.fileName}`, true);
-    this.pendingTransfers.delete(this.transferKey(peerId, transfer.transferId));
+    this.status(`${transfer.fileName} reçu de ${this.peerDisplayName(transfer.peerId)}`, true);
   }
 
-  /** Envoie la décision du destinataire sur le canal déjà établi. */
-  private sendTransferResponse(peerId: string, transferId: string, fileName: string, accepted: boolean) {
-    const channel = this.dataChannels.get(peerId);
-    if (!channel || channel.readyState !== 'open') {
-      return;
-    }
+  private failIncomingTransfer(transfer: IncomingTransfer, reason: string) {
+    this.incomingTransfers.delete(this.transferKey(transfer.peerId, transfer.transferId));
+    this.sendMessage(transfer.peerId, { type: 'complete', transferId: transfer.transferId, fileName: transfer.fileName, ok: false });
+    this.options.onTransferComplete?.({
+      peerId: transfer.peerId,
+      transferId: transfer.transferId,
+      fileName: transfer.fileName,
+      direction: 'receiving',
+      ok: false,
+      reason
+    });
+    this.status(`Réception de ${transfer.fileName} échouée : ${reason}`, false);
+  }
 
-    const response: TransferMessage = {
-      type: 'response',
-      transferId,
-      fileName,
-      accepted
-    };
-    channel.send(this.fileTransferProtocol.serializeMessage(response));
+  private waitForAcceptance(peerId: string, transferId: string, fileName: string, channel: RTCDataChannel) {
+    return new Promise<boolean>((resolve) => {
+      const timeoutId = window.setTimeout(() => {
+        if (this.outgoingTransfers.get(transferId)?.resolve !== resolve) {
+          return;
+        }
+        this.outgoingTransfers.delete(transferId);
+        if (channel.readyState === 'open') {
+          this.sendOn(channel, { type: 'cancel', transferId, fileName, reason: 'expired' });
+        }
+        this.options.onTransferExpired?.(peerId, transferId);
+        this.status(`${this.peerDisplayName(peerId)} n’a pas répondu à temps`, false);
+        resolve(false);
+      }, TRANSFER_ACCEPT_TIMEOUT_MS);
+
+      this.outgoingTransfers.set(transferId, { peerId, fileName, resolve, cancelled: false, timeoutId });
+      this.options.onTransferPending?.({ peerId, transferId, fileName, expiresInMs: TRANSFER_ACCEPT_TIMEOUT_MS });
+      this.status(`En attente de la réponse de ${this.peerDisplayName(peerId)}…`, true);
+    });
   }
 
   /**
    * Évite de remplir la mémoire du navigateur lorsque le réseau est plus lent
-   * que la boucle JavaScript qui prépare les chunks.
+   * que la lecture du fichier : on attend que le canal signale un tampon presque vide.
    */
   private waitForBuffer(channel: RTCDataChannel) {
-    const maxBufferedAmount = 4 * 1024 * 1024;
+    if (channel.readyState !== 'open') {
+      return Promise.reject(new Error('La connexion a été coupée pendant le transfert.'));
+    }
+    if (channel.bufferedAmount <= MAX_BUFFERED_BYTES) {
+      return Promise.resolve();
+    }
 
+    channel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD_BYTES;
     return new Promise<void>((resolve, reject) => {
-      const deadline = Date.now() + 30_000;
-      const checkBuffer = () => {
-        if (channel.readyState !== 'open') {
-          reject(new Error('Le canal WebRTC a été fermé pendant le transfert'));
-          return;
-        }
-
-        if (channel.bufferedAmount <= maxBufferedAmount) {
-          resolve();
-          return;
-        }
-
-        if (Date.now() >= deadline) {
-          reject(new Error('Le buffer WebRTC est resté plein trop longtemps'));
-          return;
-        }
-
-        window.setTimeout(checkBuffer, 50);
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        channel.removeEventListener('bufferedamountlow', onLow);
+        channel.removeEventListener('close', onClose);
       };
+      const onLow = () => {
+        cleanup();
+        resolve();
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error('La connexion a été coupée pendant le transfert.'));
+      };
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Le réseau ne répond plus : transfert interrompu.'));
+      }, 30_000);
 
-      checkBuffer();
+      channel.addEventListener('bufferedamountlow', onLow);
+      channel.addEventListener('close', onClose);
     });
+  }
+
+  private emitProgress(peerId: string, direction: 'sending' | 'receiving', fileName: string, bytesTransferred: number, totalBytes: number) {
+    this.options.onTransferProgress?.({
+      peerId,
+      direction,
+      fileName,
+      bytesTransferred: Math.min(totalBytes, bytesTransferred),
+      totalBytes
+    });
+  }
+
+  private sendMessage(peerId: string, message: TransferMessage) {
+    const channel = this.dataChannels.get(peerId);
+    if (channel?.readyState === 'open') {
+      this.sendOn(channel, message);
+    }
+  }
+
+  private sendOn(channel: RTCDataChannel, message: TransferMessage) {
+    channel.send(this.fileTransferProtocol.serializeMessage(message));
+  }
+
+  private status(message: string, connected: boolean) {
+    this.options.onStatusChange(message, connected);
   }
 
   private transferKey(peerId: string, transferId: string) {
@@ -895,7 +936,7 @@ export class PeerConnectionManager {
   }
 
   private peerDisplayName(peerId: string) {
-    return this.getPeerName?.(peerId) || 'l’appareil distant';
+    return this.options.getPeerName?.(peerId) || 'l’appareil distant';
   }
 
   private chunkAckKey(transferId: string, chunkIndex: number) {
@@ -911,12 +952,21 @@ export class PeerConnectionManager {
     }
   }
 
+  private rejectPendingChunkAcks(transferId: string, error: Error) {
+    for (const [key, acknowledgement] of this.pendingChunkAcks) {
+      if (key.startsWith(`${transferId}:`)) {
+        this.pendingChunkAcks.delete(key);
+        acknowledgement.reject(error);
+      }
+    }
+  }
+
   private waitForChunkAcknowledgement(transferId: string, chunkIndex: number) {
     return new Promise<void>((resolve, reject) => {
       const key = this.chunkAckKey(transferId, chunkIndex);
       const timeout = window.setTimeout(() => {
         this.pendingChunkAcks.delete(key);
-        reject(new Error(`Le chunk ${chunkIndex} n’a pas été confirmé`));
+        reject(new Error('Le destinataire ne répond plus : transfert interrompu.'));
       }, 30_000);
 
       this.pendingChunkAcks.set(key, {
@@ -930,33 +980,6 @@ export class PeerConnectionManager {
         }
       });
     });
-  }
-
-  private sendChunkAcknowledgement(peerId: string, transferId: string, chunkIndex: number) {
-    const channel = this.dataChannels.get(peerId);
-    if (!channel || channel.readyState !== 'open') {
-      return;
-    }
-
-    const acknowledgement: TransferMessage = {
-      type: 'chunk-ack',
-      transferId,
-      chunkIndex
-    };
-    channel.send(this.fileTransferProtocol.serializeMessage(acknowledgement));
-  }
-
-  private sendTextAcknowledgement(peerId: string, messageId: string) {
-    const channel = this.dataChannels.get(peerId);
-    if (!channel || channel.readyState !== 'open') {
-      return;
-    }
-
-    const acknowledgement: TransferMessage = {
-      type: 'text-ack',
-      messageId
-    };
-    channel.send(this.fileTransferProtocol.serializeMessage(acknowledgement));
   }
 
   private createTransferId() {

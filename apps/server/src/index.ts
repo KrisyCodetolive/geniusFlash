@@ -31,7 +31,8 @@ const offlineTransferSchema = z.object({
   fileSize: z.number().int().nonnegative().max(10 * 1024 ** 3),
   mimeType: z.string().max(200),
   totalChunks: z.number().int().nonnegative(),
-  hash: z.string().regex(/^[a-f0-9]{64}$/i),
+  // Le hash est désormais calculé pendant l’envoi : les clients récents ne l’envoient plus ici.
+  hash: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   expiresInMs: z.number().int().positive().max(3 * 60 * 1000)
 });
 
@@ -83,6 +84,8 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
   `);
   // The sender keeps file bytes only in its open tab. Pending requests cannot survive a server restart.
   database.prepare('DELETE FROM offline_transfers').run();
+  // Devices unseen for 30 days are forgotten so the table does not grow forever.
+  database.prepare('DELETE FROM peers WHERE last_seen < ?').run(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
   const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? '';
   const vapidSubject = process.env.VAPID_SUBJECT ?? 'mailto:admin@example.com';
@@ -95,7 +98,14 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       console.error('[GeniusSend] Invalid VAPID configuration:', error);
     }
   }
-  const httpServer = createServer();
+  // Socket.IO handles its own path; every other request only gets the health check used by Docker/Coolify.
+  const httpServer = createServer((request, response) => {
+    if (request.url === '/health') {
+      response.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
+      return;
+    }
+    response.writeHead(404).end();
+  });
   const io = new SocketIOServer(httpServer, {
     cors: {
       origin: '*',
@@ -197,7 +207,12 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
         ON CONFLICT(id) DO UPDATE SET name = excluded.name, platform = excluded.platform, last_seen = excluded.last_seen`)
         .run(safePeer.id, safePeer.name, safePeer.platform, new Date().toISOString());
       const previousSocket = onlineSockets.get(safePeer.id);
-      if (previousSocket && previousSocket !== socket.id) io.to(previousSocket).disconnectSockets(true);
+      if (previousSocket && previousSocket !== socket.id) {
+        // Tell the replaced tab why it is disconnected so it does not reconnect in a loop.
+        io.to(previousSocket).emit('peer:replaced');
+        // Without closing the transport, the disconnect packet is queued after the message above.
+        io.to(previousSocket).disconnectSockets(false);
+      }
       onlineSockets.set(safePeer.id, socket.id);
       socket.data.peer = safePeer;
       emitPeerList();

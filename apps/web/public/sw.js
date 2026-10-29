@@ -1,6 +1,9 @@
+// Changer ce nom à chaque évolution de l’interface force les appareils installés à se mettre à jour.
+const CACHE_NAME = 'geniussend-shell-v2';
+
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
-    const cache = await caches.open('geniussend-shell-v1');
+    const cache = await caches.open(CACHE_NAME);
     await cache.addAll(['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']);
     await self.skipWaiting();
   })());
@@ -9,7 +12,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((key) => key.startsWith('geniussend-shell-') && key !== 'geniussend-shell-v1')
+    await Promise.all(keys.filter((key) => key.startsWith('geniussend-shell-') && key !== CACHE_NAME)
       .map((key) => caches.delete(key)));
     await self.clients.claim();
   })());
@@ -24,7 +27,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(request).then((response) => {
       if (response.ok) {
         const copy = response.clone();
-        void caches.open('geniussend-shell-v1').then((cache) => cache.put('/', copy));
+        void caches.open(CACHE_NAME).then((cache) => cache.put('/', copy));
       }
       return response;
     }).catch(async () => (await caches.match('/')) || Response.error()));
@@ -35,7 +38,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
       if (response.ok) {
         const copy = response.clone();
-        void caches.open('geniussend-shell-v1').then((cache) => cache.put(request, copy));
+        void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
       }
       return response;
     })));

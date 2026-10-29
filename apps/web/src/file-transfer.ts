@@ -1,5 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 
+// Des chunks binaires de 64 Ko réduisent le nombre de messages et passent sur les data channels mobiles.
+export const CHUNK_SIZE_BYTES = 64 * 1024;
 export const TRANSFER_ACK_WINDOW = 8;
 export const TRANSFER_ACCEPT_TIMEOUT_MS = 3 * 60 * 1000;
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 ** 3;
@@ -15,31 +17,24 @@ export type TransferMessage =
       acceptTimeoutMs: number;
       fileSize: number;
       totalChunks: number;
-      hash: string;
-    }
-  | {
-      type: 'chunk';
-      transferId: string;
-      chunkIndex: number;
-      totalChunks: number;
-      fileName: string;
-      hash: string;
-      data: number[];
     }
   | {
       type: 'chunk-header';
       transferId: string;
       chunkIndex: number;
-      totalChunks: number;
-      fileName: string;
-      hash: string;
       byteLength: number;
     }
   | {
+      // Le hash est calculé pendant l’envoi : il n’est connu qu’à la fin du transfert.
       type: 'end';
       transferId: string;
       fileName: string;
       hash: string;
+    }
+  | {
+      type: 'complete';
+      transferId: string;
+      fileName: string;
       ok: boolean;
     }
   | {
@@ -69,9 +64,27 @@ export type TransferMessage =
       messageId: string;
     };
 
+export function toHex(bytes: Uint8Array) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Hash SHA-256 incrémental : le fichier n’a jamais besoin d’être entièrement en mémoire. */
+export function createFileHasher() {
+  return sha256.create();
+}
+
 export class FileTransferProtocol {
-  // Des chunks binaires de 64 Ko réduisent le nombre de messages sans gonfler le JSON.
-  private readonly chunkSize = 64 * 1024;
+  private readonly chunkSize = CHUNK_SIZE_BYTES;
+
+  public countChunks(fileSize: number) {
+    return Math.ceil(fileSize / this.chunkSize);
+  }
+
+  /** Lit un seul chunk du fichier, au moment où il doit partir. */
+  public async readChunk(file: Blob, chunkIndex: number) {
+    const start = chunkIndex * this.chunkSize;
+    return file.slice(start, start + this.chunkSize).arrayBuffer();
+  }
 
   public chunk(fileBuffer: ArrayBuffer, customChunkSize = this.chunkSize) {
     const view = new Uint8Array(fileBuffer);
@@ -100,8 +113,7 @@ export class FileTransferProtocol {
 
   public async computeHash(fileBuffer: ArrayBuffer) {
     // Cette implémentation fonctionne aussi sur une adresse IP locale en HTTP.
-    const hashArray = Array.from(sha256(new Uint8Array(fileBuffer)));
-    return hashArray.map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    return toHex(sha256(new Uint8Array(fileBuffer)));
   }
 
   public serializeMessage(message: unknown) {

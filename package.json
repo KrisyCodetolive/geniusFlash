@@ -9,6 +9,6 @@
     "dev:server": "npm run dev --workspace @geniussend/server",
     "dev:web": "npm run dev --workspace @geniussend/web",
     "build": "npm run build --workspace @geniussend/server && npm run build --workspace @geniussend/web",
-    "test": "npm run test --workspace @geniussend/server"
+    "test": "npm run test --workspaces"
   }
 }
