@@ -536,7 +536,7 @@ function entrySubLabel(entry: TransferEntry) {
   }
 }
 
-function createIconButton(label: string, iconName: 'download' | 'close') {
+function createIconButton(label: string, iconName: 'close') {
   const button = document.createElement('button');
   button.className = 'icon-button small';
   button.type = 'button';
@@ -612,11 +612,6 @@ function renderEntry(entry: TransferEntry) {
     const cancelButton = createIconButton('Annuler ce transfert', 'close');
     cancelButton.addEventListener('click', () => cancelEntry(entry));
     actions.append(cancelButton);
-  } else if (entry.url) {
-    const url = entry.url;
-    const saveButton = createIconButton('Enregistrer le fichier', 'download');
-    saveButton.addEventListener('click', () => downloadUrl(url, entry.fileName ?? 'fichier'));
-    actions.append(saveButton);
   }
 
   item.append(visual, main, actions);
@@ -1071,7 +1066,6 @@ function handleTransferComplete(result: TransferResult) {
       state: 'done',
       time: new Date()
     });
-    showToast({ message: `${result.fileName} reçu de ${getPeerDisplayName(result.peerId)}`, tone: 'success' });
     return;
   }
 
@@ -1130,10 +1124,10 @@ function createManager(socket: Socket) {
       }
       showTemporaryTransferStatus('Transfert annulé', 5_000);
     },
-    onTransferDecision: ({ peerId, transferId, accepted }) => {
+    // Le refus s’affiche dans « Transferts récents », sans notification passagère.
+    onTransferDecision: ({ transferId, accepted }) => {
       if (!accepted) {
         updateEntry(transferId, { state: 'refused', reason: undefined });
-        showToast({ message: `${getPeerDisplayName(peerId)} a refusé le fichier`, tone: 'error' });
       }
     },
     requestOfflineTransfer: (request) => new Promise<boolean>((resolve) => {
