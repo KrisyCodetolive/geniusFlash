@@ -18,25 +18,62 @@ locales soient accessibles par leur nom de domaine sans configurer le routeur.
 
 ```bash
 cd genius-dns
-python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'   # une fois ; les commandes sont dans .venv/bin
-
-# Mini PC
-.venv/bin/geniusdns-registry keygen              # registry.key (secrète) + registry.pub
-.venv/bin/geniusdns-registry add send.genius.xyz 192.168.1.20
-.venv/bin/geniusdns-registry list
-.venv/bin/geniusdns-registry serve --port 5353
-
-# PC client (sudo : écrit dans /etc/hosts ; on appelle le venv, que root peut exécuter)
-# registry.pub = clé publique copiée depuis le mini PC
-sudo .venv/bin/geniusdns-agent \
-  --registry-url http://192.168.1.20:5353/v1/registry \
-  --public-key registry.pub --suffix genius.xyz run
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'   # une fois ; commandes dans .venv/bin
 ```
 
-La dernière commande de la ligne peut être `run` (en continu), `sync` (une fois), `status` ou `clean`
-(retire le bloc de hosts). Les autres options restent les mêmes.
+### Registre (mini PC)
 
+```bash
+gdns keygen                 # registry.key (SECRÈTE) + registry.pub (à distribuer aux agents)
+gdns token                  # registry.token : jeton d'administration à distance
+gdns add send.genius.ln 172.20.10.2
+gdns list
+gdns serve --port 5353      # sert aussi les exécutables du dossier dist/ sur /download/
+```
+
+`gdns` est un alias de `geniusdns-registry` (dans `.venv/bin`). Ne commitez jamais `registry.key` ni
+`registry.token` (ils sont dans `.gitignore`).
+
+### CLI à distance
+
+Avec `--server`, les commandes passent par le serveur en cours d'exécution, depuis n'importe quelle
+machine qui a le jeton (copie de `registry.token`, ou variable `GENIUSDNS_TOKEN`) :
+
+```bash
+export GENIUSDNS_SERVER=http://172.20.10.2:5353
+gdns list
+gdns add crm.genius.ln 172.20.10.2
+gdns remove crm.genius.ln
+```
+
+Le jeton circule en clair en HTTP : à réserver au réseau de confiance.
+
+### Agent (chaque PC)
+
+```bash
+# Exécutable Linux téléchargé depuis le registre
+curl -O http://172.20.10.2:5353/download/geniusdns-agent-linux-x86_64
+curl -O http://172.20.10.2:5353/download/geniusdns-agent-linux-x86_64.sha256 && sha256sum -c *.sha256
+chmod +x geniusdns-agent-linux-x86_64
+
+sudo ./geniusdns-agent-linux-x86_64 \
+  --registry-url http://172.20.10.2:5353/v1/registry \
+  --public-key registry.pub --suffix genius.ln run
+```
+
+La dernière commande peut être `run` (en continu), `sync` (une fois), `status` ou `clean`
+(retire le bloc de hosts). Sans exécutable : `sudo .venv/bin/geniusdns-agent ...`.
 Pour essayer sans droits admin : `--hosts-file /tmp/hosts --state-file /tmp/state.json`.
+
+### Construire l'exécutable Linux
+
+```bash
+.venv/bin/pip install pyinstaller
+./scripts/build-linux.sh        # -> dist/geniusdns-agent-linux-x86_64 (+ .sha256)
+```
+
+L'exécutable embarque Python mais dépend de la glibc de la machine de build : il fonctionne sur les
+distributions aussi récentes ou plus récentes.
 
 ## Tests
 
