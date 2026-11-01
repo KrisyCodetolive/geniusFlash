@@ -7,3 +7,7 @@ coverage
 *.sqlite
 apps/server/data/
 GeniusSend.zip
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.venv/

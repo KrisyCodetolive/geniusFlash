@@ -1,0 +1,11 @@
+# Secrets et données propres à chaque installation : ne jamais commiter
+registry.key
+registry.token
+registry.json
+registry.pub
+state.json
+
+# Build
+dist/
+build/
+*.spec
