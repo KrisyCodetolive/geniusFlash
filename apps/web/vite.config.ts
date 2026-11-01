@@ -6,6 +6,9 @@ const signalingProxy = {
     target: 'http://localhost:3001',
     ws: true
   },
+  '/share-url': {
+    target: 'http://localhost:3001'
+  },
   '/chat': {
     target: 'http://localhost:3001'
   }

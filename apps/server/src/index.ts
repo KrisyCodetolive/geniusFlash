@@ -179,6 +179,13 @@ export function createSignalServer(port = 3001, databasePath = process.env.GENIU
       response.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
       return;
     }
+    // Adresse à encoder dans le QR code (ex. http://192.168.1.20) quand le site est ouvert par un nom
+    // de domaine que les téléphones ne savent pas résoudre. Vide : le client garde l'adresse courante.
+    if (url.pathname === '/share-url') {
+      const shareUrl = (process.env.GENIUSSEND_SHARE_URL ?? '').trim();
+      response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ url: shareUrl || null }));
+      return;
+    }
     if (url.pathname === '/chat/files' && request.method === 'POST') {
       void handleChatUpload(request, response);
       return;

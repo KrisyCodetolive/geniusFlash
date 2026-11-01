@@ -9,6 +9,8 @@ services:
     environment:
       - PORT=3001
       - GENIUSSEND_DB_PATH=/data/geniussend.sqlite
+      # Adresse encodée dans le QR code (ex. http://192.168.1.20) ; vide = adresse du navigateur.
+      - GENIUSSEND_SHARE_URL=${GENIUSSEND_SHARE_URL:-}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}

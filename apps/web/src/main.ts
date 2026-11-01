@@ -721,8 +721,20 @@ function peerConnectionState(peerId: string) {
   return { key: 'idle', label: 'En ligne' };
 }
 
-function renderShareQr() {
-  const url = `${window.location.origin}/`;
+// Adresse que le serveur souhaite partager (son IP), pour les appareils qui ne résolvent pas le nom de domaine.
+async function fetchShareUrl(): Promise<string> {
+  try {
+    const response = await fetch('/share-url', { cache: 'no-store', signal: AbortSignal.timeout(2000) });
+    const { url } = (await response.json()) as { url?: string | null };
+    if (url) return `${url.replace(/\/+$/, '')}/`;
+  } catch {
+    // Serveur injoignable ou ancienne version : on garde l'adresse courante.
+  }
+  return `${window.location.origin}/`;
+}
+
+async function renderShareQr() {
+  const url = await fetchShareUrl();
   const qr = qrcode(0, 'M');
   qr.addData(url);
   qr.make();
@@ -1430,9 +1442,9 @@ function openProfile() {
 
 profileButton.addEventListener('click', openProfile);
 
-function openQrDialog() {
-  renderShareQr();
+async function openQrDialog() {
   qrDialog.showModal();
+  await renderShareQr();
 }
 
 qrButton.addEventListener('click', openQrDialog);

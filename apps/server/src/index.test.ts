@@ -133,6 +133,20 @@ describe('signal server', () => {
     expect(await response.text()).toBe('ok');
   });
 
+  it('exposes the configured share URL for the QR code', async () => {
+    const port = (server.httpServer.address() as { port: number }).port;
+    const previous = process.env.GENIUSSEND_SHARE_URL;
+    try {
+      delete process.env.GENIUSSEND_SHARE_URL;
+      expect(await (await fetch(`http://localhost:${port}/share-url`)).json()).toEqual({ url: null });
+      process.env.GENIUSSEND_SHARE_URL = ' http://192.168.1.20 ';
+      expect(await (await fetch(`http://localhost:${port}/share-url`)).json()).toEqual({ url: 'http://192.168.1.20' });
+    } finally {
+      if (previous === undefined) delete process.env.GENIUSSEND_SHARE_URL;
+      else process.env.GENIUSSEND_SHARE_URL = previous;
+    }
+  });
+
   it('flags hidden devices so clients can leave them off the radar', async () => {
     const list = new Promise<Array<{ id: string; hidden: boolean }>>((resolve) => clientA.once('peers:list', resolve));
     clientB.emit('peer:register', { id: 'device-b', name: 'iPhone-B', platform: 'ios', hidden: true });
