@@ -13,6 +13,7 @@ COPY apps/server/tsconfig.json apps/server/tsconfig.json
 COPY apps/web/src apps/web/src
 COPY apps/web/public apps/web/public
 COPY apps/web/index.html apps/web/index.html
+COPY apps/web/app apps/web/app
 COPY apps/web/tsconfig.json apps/web/tsconfig.json
 COPY apps/web/vite.config.ts apps/web/vite.config.ts
 

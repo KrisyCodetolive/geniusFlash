@@ -112,9 +112,9 @@ function escapeHtml(value: string) {
 app.innerHTML = `
   <header class="topbar">
     <div class="brand">
-      <img class="brand-logo" src="/icons/icon-192.png" alt="" width="40" height="40" />
+      <a class="icon-button back-button" href="/" aria-label="Retour à l’accueil" title="Retour à l’accueil">${icon('back')}</a>
       <div>
-        <h1>GeniusSend</h1>
+        <h1><picture class="brand-logo"><source srcset="/brand/logo-white.svg" media="(prefers-color-scheme: dark)" /><img src="/brand/logo.svg" alt="GeniusSend" height="30" /></picture></h1>
         <p class="tagline">Transfert en réseau local</p>
       </div>
     </div>
@@ -142,7 +142,8 @@ app.innerHTML = `
         <div class="radar-ring ring-1" aria-hidden="true"></div>
         <div class="radar-ring ring-2" aria-hidden="true"></div>
         <div class="radar-ring ring-3" aria-hidden="true"></div>
-        <div class="radar-sweep" aria-hidden="true"></div>
+        <div class="radar-pulse" aria-hidden="true"></div>
+        <div class="radar-pulse delayed" aria-hidden="true"></div>
         <div class="radar-node self">
           <span class="node-circle">${platformIcon(detectedPlatform)}<span class="self-label">${isPhone ? 'Ce téléphone' : 'Ce PC'}</span></span>
           <span class="node-status" id="self-name"></span>
@@ -722,7 +723,7 @@ function peerConnectionState(peerId: string) {
 }
 
 function renderShareQr() {
-  const url = `${window.location.origin}/`;
+  const url = `${window.location.origin}/app/`;
   const qr = qrcode(0, 'M');
   qr.addData(url);
   qr.make();

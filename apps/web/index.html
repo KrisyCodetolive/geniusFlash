@@ -3,22 +3,119 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="Envoyez des fichiers et du texte directement entre vos appareils, en local." />
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="GeniusSend envoie vos photos, vidéos et documents d’un appareil à l’autre, directement depuis le navigateur. Sans câble, sans compte, jusqu’à 10 Go par fichier." />
     <meta name="application-name" content="GeniusSend" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="GeniusSend" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta property="og:title" content="GeniusSend : vos fichiers d’un appareil à l’autre" />
+    <meta property="og:description" content="Transfert direct entre téléphone et ordinateur, depuis le navigateur. Sans câble, sans compte." />
+    <meta property="og:image" content="/icons/icon-512.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <title>GeniusSend</title>
+    <link rel="stylesheet" href="/src/landing.css" />
+    <script type="module" src="/src/landing.ts"></script>
+    <title>GeniusSend : vos fichiers d’un appareil à l’autre</title>
+    <script>
+      // Les applications installées avant la page d’accueil s’ouvraient sur « / » : on les renvoie vers l’app.
+      if (window.matchMedia('(display-mode: standalone)').matches) window.location.replace('/app/');
+    </script>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <header class="nav">
+      <a class="nav-brand" href="/">
+        <picture class="logo"><source srcset="/brand/logo-white.svg" media="(prefers-color-scheme: dark)" /><img src="/brand/logo.svg" alt="GeniusSend" height="32" /></picture>
+      </a>
+      <a class="button button-dark nav-cta" href="/app/">Ouvrir l’app</a>
+    </header>
+
+    <main>
+      <section class="showcase" id="atouts" aria-labelledby="atouts-title" data-showcase>
+        <div class="showcase-inner">
+          <div class="showcase-text">
+            <p class="eyebrow">Pourquoi GeniusSend</p>
+            <h1 id="atouts-title">Tout ce qu’il faut pour partager, rien de plus</h1>
+            <a class="button showcase-cta" href="/app/">Accéder</a>
+          </div>
+          <div class="showcase-carousel" role="region" aria-roledescription="carrousel" aria-label="Les atouts de GeniusSend">
+            <ul class="showcase-stage">
+            <li class="showcase-card" style="--card: #2563eb" data-tone="#2563eb" role="group" aria-roledescription="carte" aria-label="1 sur 6 : Direct, d’appareil à appareil">
+              <div class="showcase-caption">
+                <p class="showcase-title">Direct</p>
+                <p class="showcase-sub">D’appareil à appareil</p>
+              </div>
+              <article class="showcase-face">
+                <div class="showcase-visual"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2.5 4.5 13.5H12l-1 8 8.5-11H12z"/></svg><span class="showcase-chip">Connexion directe</span></div>
+                <h3>Direct, d’appareil à appareil</h3>
+                <p>Le fichier voyage par une connexion directe entre les deux appareils. Il n’est jamais déposé sur un serveur.</p>
+              </article>
+            </li>
+            <li class="showcase-card" style="--card: #6d28d9" data-tone="#6d28d9" role="group" aria-roledescription="carte" aria-label="2 sur 6 : Jusqu’à 10 Go par fichier">
+              <div class="showcase-caption">
+                <p class="showcase-title">Grand format</p>
+                <p class="showcase-sub">Sans compression</p>
+              </div>
+              <article class="showcase-face">
+                <div class="showcase-visual"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2.5H7a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7.5z"/><path d="M14 2.5v5h5"/></svg><span class="showcase-chip">10 Go par fichier</span></div>
+                <h3>Jusqu’à 10 Go par fichier</h3>
+                <p>Une vidéo entière, une archive, un dossier compressé : envoyez plusieurs fichiers à la suite, tels quels.</p>
+              </article>
+            </li>
+            <li class="showcase-card" style="--card: #047857" data-tone="#047857" role="group" aria-roledescription="carte" aria-label="3 sur 6 : Vérifié à l’arrivée">
+              <div class="showcase-caption">
+                <p class="showcase-title">Vérifié</p>
+                <p class="showcase-sub">À chaque arrivée</p>
+              </div>
+              <article class="showcase-face">
+                <div class="showcase-visual"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span class="showcase-chip">Empreinte SHA-256</span></div>
+                <h3>Vérifié à l’arrivée</h3>
+                <p>Une empreinte est comparée à la fin de chaque envoi. Un fichier incomplet ou abîmé est signalé, jamais livré en silence.</p>
+              </article>
+            </li>
+            <li class="showcase-card" style="--card: #b3401f" data-tone="#b3401f" role="group" aria-roledescription="carte" aria-label="4 sur 6 : Rien n’arrive sans votre accord">
+              <div class="showcase-caption">
+                <p class="showcase-title">Votre accord</p>
+                <p class="showcase-sub">Avant chaque réception</p>
+              </div>
+              <article class="showcase-face">
+                <div class="showcase-visual"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg><span class="showcase-chip">3 minutes pour répondre</span></div>
+                <h3>Rien n’arrive sans votre accord</h3>
+                <p>Chaque envoi attend que le destinataire l’accepte. Sans réponse sous trois minutes, la demande expire.</p>
+              </article>
+            </li>
+            <li class="showcase-card" style="--card: #0e7490" data-tone="#0e7490" role="group" aria-roledescription="carte" aria-label="5 sur 6 : Tous vos appareils">
+              <div class="showcase-caption">
+                <p class="showcase-title">Partout</p>
+                <p class="showcase-sub">Sur tous vos appareils</p>
+              </div>
+              <article class="showcase-face">
+                <div class="showcase-visual"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></svg><span class="showcase-chip">Android · iPhone · PC · Mac</span></div>
+                <h3>Tous vos appareils</h3>
+                <p>Android, iPhone, Windows, Mac et Linux : un navigateur récent suffit. Installable comme une application.</p>
+              </article>
+            </li>
+            <li class="showcase-card" style="--card: #be185d" data-tone="#be185d" role="group" aria-roledescription="carte" aria-label="6 sur 6 : Un chat partagé">
+              <div class="showcase-caption">
+                <p class="showcase-title">Chat partagé</p>
+                <p class="showcase-sub">Entre appareils connectés</p>
+              </div>
+              <article class="showcase-face">
+                <div class="showcase-visual"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4A1.5 1.5 0 0 1 4 14.5z"/><path d="M8 8.5h8M8 12h5"/></svg><span class="showcase-chip">Effacé après 24 h</span></div>
+                <h3>Un chat partagé</h3>
+                <p>Un lien, un texte, une photo à faire circuler ? Le chat les partage avec les appareils connectés, puis les efface.</p>
+              </article>
+            </li>
+            </ul>
+            <div class="showcase-dots" role="group" aria-label="Choisir une carte" hidden></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span class="footer-brand"><picture class="logo"><source srcset="/brand/logo-white.svg" media="(prefers-color-scheme: dark)" /><img src="/brand/logo.svg" alt="GeniusSend" height="24" /></picture><span>© GeniusSend</span></span>
+      <a href="/app/">Ouvrir l’application</a>
+    </footer>
   </body>
 </html>

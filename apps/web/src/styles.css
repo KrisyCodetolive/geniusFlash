@@ -9,10 +9,10 @@
   --border-strong: #2c3a52;
   --text: #e6edf7;
   --muted: #8a98ad;
-  --accent: #38bdf8;
-  --accent-strong: #0ea5e9;
-  --accent-soft: rgba(56, 189, 248, 0.14);
-  --on-accent: #062538;
+  --accent: #60a5fa;
+  --accent-strong: #3b82f6;
+  --accent-soft: rgba(96, 165, 250, 0.14);
+  --on-accent: #0b1a3a;
   --success: #34d399;
   --success-soft: rgba(52, 211, 153, 0.14);
   --warning: #fbbf24;
@@ -20,9 +20,12 @@
   --danger-soft: rgba(248, 113, 113, 0.14);
   --ring: rgba(148, 163, 184, 0.14);
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
-  --bubble-mine: #075985;
-  --bubble-mine-text: #e0f2fe;
+  --bubble-mine: #1e40af;
+  --bubble-mine-text: #dbeafe;
   --chat-bg: #0a101c;
+  --hero-top: #1d4ed8;
+  --hero-bottom: #1e3a8a;
+  --hero-shadow: rgba(0, 0, 0, 0.4);
   --mono: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
 }
 
@@ -30,16 +33,16 @@
   :root {
     color-scheme: light;
     --bg: #eef2f7;
-    --bg-glow: #e0f2fe;
+    --bg-glow: #dbeafe;
     --panel: #ffffff;
     --panel-soft: #f6f8fb;
     --border: #dbe3ee;
     --border-strong: #c3cfdf;
     --text: #0f172a;
     --muted: #55657c;
-    --accent: #0284c7;
-    --accent-strong: #0369a1;
-    --accent-soft: rgba(2, 132, 199, 0.1);
+    --accent: #2563eb;
+    --accent-strong: #1d4ed8;
+    --accent-soft: rgba(37, 99, 235, 0.1);
     --on-accent: #ffffff;
     --success: #059669;
     --success-soft: rgba(5, 150, 105, 0.1);
@@ -48,9 +51,12 @@
     --danger-soft: rgba(220, 38, 38, 0.08);
     --ring: rgba(15, 23, 42, 0.1);
     --shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
-    --bubble-mine: #d4eefb;
+    --bubble-mine: #dbeafe;
     --bubble-mine-text: #0f172a;
     --chat-bg: #f1f5f9;
+    --hero-top: #2563eb;
+    --hero-bottom: #1d4ed8;
+    --hero-shadow: rgba(37, 99, 235, 0.25);
   }
 }
 
@@ -175,10 +181,25 @@ h2 {
   min-width: 0;
 }
 
-.brand-logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
+/* Retour vers la page d’accueil (un lien, stylé comme les boutons ronds de l’en-tête). */
+.back-button {
+  flex-shrink: 0;
+  text-decoration: none;
+}
+
+/* Application installée : l’accueil renvoie vers /app/, le bouton tournerait en rond. */
+@media (display-mode: standalone) {
+  .back-button {
+    display: none;
+  }
+}
+
+/* Logo vectoriel, sur le modèle de GeniusPay ; la version blanche s’affiche en thème sombre. */
+.brand-logo,
+.brand-logo img {
+  display: block;
+  height: 30px;
+  width: auto;
 }
 
 h1 {
@@ -188,7 +209,7 @@ h1 {
 }
 
 .tagline {
-  margin: 1px 0 0;
+  margin: 6px 0 0;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 600;
@@ -273,7 +294,7 @@ h1 {
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: var(--on-accent);
-  box-shadow: 0 6px 18px rgba(14, 165, 233, 0.35);
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
 }
 
 .install-button:hover {
@@ -360,9 +381,19 @@ h1 {
 
 /* ---------- Radar ---------- */
 
+/* Le radar est une grande scène bleue : texte blanc, cercles translucides qui respirent. */
 .radar-panel {
-  min-height: 680px;
+  --on-hero: #ffffff;
+  --on-hero-muted: rgba(255, 255, 255, 0.82);
+  --hero-glass: rgba(255, 255, 255, 0.16);
+  --hero-glass-border: rgba(255, 255, 255, 0.38);
+  position: relative;
+  min-height: 0;
   overflow: hidden;
+  border: none;
+  background: linear-gradient(180deg, var(--hero-top) 0%, var(--hero-bottom) 100%);
+  color: var(--on-hero);
+  box-shadow: 0 24px 60px var(--hero-shadow);
 }
 
 .radar-head {
@@ -373,28 +404,31 @@ h1 {
 }
 
 .radar-head h2 {
-  font-size: 1.45rem;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 .radar-status {
   margin: 4px 0 0;
-  color: var(--accent);
-  font-size: 0.85rem;
+  color: var(--on-hero-muted);
+  font-size: 0.95rem;
 }
 
 .peer-count {
   margin-top: 8px;
+  color: var(--on-hero-muted);
   white-space: nowrap;
 }
 
 .radar {
   --node-size: 64px;
-  --self-size: 116px;
+  --self-size: 104px;
   --label-width: 150px;
   position: relative;
-  width: min(100%, 760px);
+  width: min(100%, 540px);
   aspect-ratio: 1;
-  margin: 24px auto 76px;
+  margin: 8px auto 68px;
 }
 
 /* Beaucoup d’appareils : bulles et noms plus compacts pour qu’ils ne se chevauchent pas. */
@@ -405,7 +439,7 @@ h1 {
 
 .radar[data-density='crowded'] {
   --node-size: 46px;
-  --self-size: 100px;
+  --self-size: 88px;
   --label-width: 100px;
 }
 
@@ -429,46 +463,71 @@ h1 {
   display: none;
 }
 
+/* Disques pleins et translucides, plus clairs vers le centre. */
 .radar-ring {
   position: absolute;
   top: 50%;
   left: 50%;
-  border: 1px solid var(--ring);
   border-radius: 50%;
+  background: rgba(255, 255, 255, var(--ring-alpha));
   transform: translate(-50%, -50%);
+  animation: ring-breathe 4s ease-in-out infinite;
   pointer-events: none;
 }
 
 .ring-1 {
+  --ring-alpha: 0.1;
   width: 44%;
   height: 44%;
 }
 
 .ring-2 {
+  --ring-alpha: 0.07;
   width: 67%;
   height: 67%;
+  animation-delay: 0.25s;
 }
 
 .ring-3 {
+  --ring-alpha: 0.05;
   width: 90%;
   height: 90%;
+  animation-delay: 0.5s;
 }
 
-/* Balayage lent façon radar, désactivé si l’utilisateur préfère moins d’animations. */
-.radar-sweep {
+@keyframes ring-breathe {
+  50% {
+    transform: translate(-50%, -50%) scale(1.035);
+  }
+}
+
+/* Ondes qui partent de l’appareil et s’effacent au bord du radar. */
+.radar-pulse {
   position: absolute;
-  inset: 6%;
+  top: 50%;
+  left: 50%;
+  width: 90%;
+  height: 90%;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, var(--accent-soft), transparent 22%);
-  -webkit-mask: radial-gradient(circle, transparent 20%, #000 21%);
-  mask: radial-gradient(circle, transparent 20%, #000 21%);
-  animation: radar-spin 7s linear infinite;
+  background: radial-gradient(circle, transparent 55%, rgba(255, 255, 255, 0.22) 100%);
+  transform: translate(-50%, -50%) scale(0.18);
+  opacity: 0;
+  animation: radar-pulse 3.2s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
   pointer-events: none;
 }
 
-@keyframes radar-spin {
-  to {
-    transform: rotate(360deg);
+.radar-pulse.delayed {
+  animation-delay: 1.6s;
+}
+
+@keyframes radar-pulse {
+  0% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(0.18);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
   }
 }
 
@@ -486,7 +545,7 @@ h1 {
   padding: 0;
   border: none;
   background: none;
-  color: var(--text);
+  color: var(--on-hero);
   text-align: center;
   transform: translate(-50%, calc(var(--node-size) / -2));
   transition: left 0.5s ease, top 0.5s ease;
@@ -497,10 +556,12 @@ h1 {
   place-items: center;
   width: var(--node-size);
   height: var(--node-size);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--hero-glass-border);
   border-radius: 50%;
-  background: var(--panel-soft);
-  color: var(--text);
+  background: var(--hero-glass);
+  color: var(--on-hero);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
@@ -514,38 +575,40 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.9rem;
-  font-weight: 700;
+  font-size: 0.95rem;
+  font-weight: 800;
 }
 
 .node-status {
   font-size: 0.78rem;
-  color: var(--muted);
+  color: var(--on-hero-muted);
 }
 
 .node-status[data-state='selected'] {
-  color: var(--success);
-  font-weight: 600;
+  color: var(--on-hero);
+  font-weight: 700;
 }
 
 .node-status[data-state='ready'] {
-  color: var(--accent);
+  color: #bbf7d0;
 }
 
 .node-status[data-state='connecting'] {
-  color: var(--warning);
+  color: #fde68a;
 }
 
 .radar-node.peer:hover .node-circle {
-  border-color: var(--accent);
+  border-color: var(--on-hero);
+  background: rgba(255, 255, 255, 0.26);
   transform: scale(1.06);
 }
 
+/* L’appareil choisi devient un disque blanc plein, comme un bouton actif. */
 .radar-node.peer.selected .node-circle {
   border-color: transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-  box-shadow: 0 0 0 6px var(--accent-soft), 0 10px 30px rgba(14, 165, 233, 0.35);
+  background: #ffffff;
+  color: var(--hero-bottom);
+  box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.2), 0 12px 32px rgba(8, 30, 90, 0.3);
 }
 
 .radar-node.peer:focus-visible {
@@ -553,7 +616,7 @@ h1 {
 }
 
 .radar-node.peer:focus-visible .node-circle {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--on-hero);
   outline-offset: 4px;
 }
 
@@ -573,17 +636,30 @@ h1 {
   pointer-events: none;
 }
 
+/* Le disque central : plus clair, avec un halo, comme le cœur d’une onde. */
 .radar-node.self .node-circle {
-  gap: 2px;
+  gap: 4px;
   align-content: center;
-  border: 2px solid var(--accent);
-  background: var(--panel);
-  box-shadow: 0 0 0 10px var(--accent-soft);
+  border: none;
+  background: rgba(255, 255, 255, 0.34);
+  box-shadow: 0 0 0 14px rgba(255, 255, 255, 0.08), 0 20px 50px rgba(8, 30, 90, 0.25);
+}
+
+.radar-node.self .node-circle .icon {
+  width: 38px;
+  height: 38px;
+}
+
+.radar-node.self .node-status {
+  margin-top: 10px;
+  color: var(--on-hero);
+  font-size: 1.05rem;
+  font-weight: 800;
 }
 
 .self-label {
   font-size: 0.85rem;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .radar-node.searching {
@@ -595,26 +671,45 @@ h1 {
 }
 
 .radar-node.searching .node-circle {
-  border-style: dashed;
+  border: 1px dashed rgba(255, 255, 255, 0.55);
   background: transparent;
-  color: var(--muted);
+  color: var(--on-hero-muted);
   font-weight: 700;
   letter-spacing: 1px;
 }
 
-/* Radar vide : une simple invitation à afficher le QR code. */
+/* Radar vide : une invitation à afficher le QR code, avec un large bouton blanc. */
 .radar-hint {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 0.9rem;
+  gap: 14px;
+  color: var(--on-hero-muted);
+  font-size: 0.95rem;
   text-align: center;
 }
 
 .radar-hint p {
   margin: 0;
+}
+
+.radar-hint .secondary-button {
+  width: min(100%, 320px);
+  padding: 15px 24px;
+  border: none;
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--hero-bottom);
+  font-size: 0.9rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: 0 10px 30px rgba(8, 30, 90, 0.2);
+}
+
+.radar-hint .secondary-button:focus-visible {
+  outline-color: #ffffff;
+  outline-offset: 3px;
 }
 
 /* Fenêtre « Connecter un appareil » : QR code sur fond blanc, lisible dans les deux thèmes. */
@@ -1338,13 +1433,13 @@ h1 {
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: var(--on-accent);
-  box-shadow: 0 10px 28px rgba(14, 165, 233, 0.4);
+  box-shadow: 0 10px 28px rgba(37, 99, 235, 0.4);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .chat-fab:hover {
   transform: translateY(-2px) scale(1.04);
-  box-shadow: 0 14px 34px rgba(14, 165, 233, 0.5);
+  box-shadow: 0 14px 34px rgba(37, 99, 235, 0.5);
 }
 
 .chat-fab .icon {
@@ -2010,7 +2105,8 @@ body.chat-locked {
     gap: 6px;
   }
 
-  .topbar-actions .icon-button {
+  .topbar-actions .icon-button,
+  .back-button {
     width: 40px;
     height: 40px;
   }
@@ -2025,14 +2121,11 @@ body.chat-locked {
   }
 }
 
-/* Très petit écran : le logo seul suffit, les boutons de l’en-tête gardent leur place. */
+/* Très petit écran : le logo rétrécit pour laisser leur place aux boutons de l’en-tête. */
 @media (max-width: 420px) {
-  .brand h1 {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
+  .brand-logo,
+  .brand-logo img {
+    height: 22px;
   }
 }
 

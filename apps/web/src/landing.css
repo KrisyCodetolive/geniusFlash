@@ -1,0 +1,451 @@
+/* Page d’accueil : mêmes bleus que le radar de l’application, le thème clair et sombre suit le système. */
+:root {
+  color-scheme: light;
+  --bg: #f4f7fb;
+  --surface: #ffffff;
+  --border: #dbe3ee;
+  --text: #0f172a;
+  --muted: #55657c;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  /* Bleu du logo GeniusSend (le même que GeniusPay). */
+  --brand: #2563eb;
+  --shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #080c15;
+    --surface: #0e1422;
+    --border: #1f2a3d;
+    --text: #e6edf7;
+    --muted: #8a98ad;
+    --accent: #60a5fa;
+    --accent-soft: rgba(96, 165, 250, 0.14);
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  font-family: Inter, 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.55;
+  overflow-x: hidden;
+}
+
+a {
+  color: inherit;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* ---------- Boutons ---------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  padding: 0 26px;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 0.92rem;
+  text-decoration: none;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+}
+
+.button-dark {
+  min-height: 42px;
+  padding: 0 18px;
+  background: var(--brand);
+  color: #ffffff;
+}
+
+/* ---------- Navigation ---------- */
+
+.nav {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px 32px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.nav-brand {
+  display: flex;
+  text-decoration: none;
+}
+
+/* Logo vectoriel, sur le modèle de GeniusPay ; la version blanche s’affiche en thème sombre. */
+.logo,
+.logo img {
+  display: block;
+  height: 32px;
+  width: auto;
+}
+
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.footer-brand .logo,
+.footer-brand .logo img {
+  height: 24px;
+}
+
+.nav-cta {
+  margin-left: auto;
+}
+
+/* ---------- Carrousel des atouts ---------- */
+
+/* Déclarée comme couleur pour que le navigateur puisse l’animer : fond et cartes changent de teinte ensemble. */
+@property --tone {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #2563eb;
+}
+
+/* Le fond prend la couleur de la carte active (--tone, mis à jour par landing.ts) et glisse de l’une à l’autre. */
+.showcase {
+  --tone: #2563eb;
+  --card-width: 330px;
+  padding: 96px 32px;
+  background-color: var(--tone);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.14));
+  color: #ffffff;
+  overflow: hidden;
+  transition: --tone 0.8s ease;
+}
+
+.showcase-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: 40px;
+}
+
+.showcase .eyebrow {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.showcase h1 {
+  font-size: clamp(2.3rem, 5vw, 4.3rem);
+  font-weight: 800;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+}
+
+/* Bouton vers l’application en verre dépoli : la couleur de la section transparaît à travers. */
+.showcase-cta {
+  min-width: 220px;
+  margin-top: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.1));
+  color: #ffffff;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+.showcase-cta:hover {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.16));
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
+.showcase-visual svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.showcase a:focus-visible,
+.showcase button:focus-visible,
+.showcase-card:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 3px;
+}
+
+/* Sans JavaScript : les cartes défilent simplement à l’horizontale. */
+.showcase-stage {
+  display: flex;
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+}
+
+.showcase-card {
+  flex: 0 0 var(--card-width);
+  scroll-snap-align: center;
+}
+
+/* Avec JavaScript : scène en perspective, la carte active au centre et ses voisines tournées vers elle. */
+.showcase.is-ready .showcase-stage {
+  position: relative;
+  height: 590px;
+  overflow: visible;
+  perspective: 1400px;
+}
+
+.showcase.is-ready .showcase-card {
+  --offset: 0;
+  --distance: 0;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--card-width);
+  margin-left: calc(var(--card-width) / -2);
+  transform: translateX(calc(var(--offset) * 74%)) rotateY(calc(var(--offset) * -42deg)) scale(calc(1 - var(--distance) * 0.2));
+  transform-origin: 50% 50%;
+  z-index: calc(10 - var(--distance));
+  transition: transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 0.5s ease;
+}
+
+.showcase.is-ready .showcase-card[data-position='side'] {
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.showcase.is-ready .showcase-card[data-position='hidden'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.showcase-caption {
+  margin-bottom: 22px;
+  text-align: center;
+}
+
+.showcase-title {
+  margin: 0;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.showcase-sub {
+  margin: 2px 0 0;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.showcase-face {
+  padding: 16px 16px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 22px;
+  /* Voile clair posé sur la couleur de la section : la carte reste opaque devant ses voisines. */
+  background: linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12)), var(--tone);
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.25);
+}
+
+/* Visuel de la carte : sa propre couleur, éclaircie, avec l’icône et un repère chiffré. */
+.showcase-visual {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--card);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--card) 62%, #ffffff), color-mix(in srgb, var(--card) 88%, #ffffff));
+}
+
+.showcase-visual::before,
+.showcase-visual::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.showcase-visual::before {
+  width: 78%;
+  height: 78%;
+}
+
+.showcase-visual::after {
+  width: 50%;
+  height: 50%;
+}
+
+.showcase-visual svg {
+  position: relative;
+  z-index: 1;
+  width: 34%;
+  height: 34%;
+  stroke-width: 1.6;
+}
+
+.showcase-chip {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 1;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--card);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.showcase-face h3 {
+  margin-top: 18px;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.showcase-face p {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.93rem;
+}
+
+.showcase-dots {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 26px;
+}
+
+/* Points de 8 px, dans une zone cliquable de 24 px. */
+.showcase-dot {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.showcase-dot::before {
+  content: '';
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: auto;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.showcase-dot[aria-current='true']::before {
+  background: #ffffff;
+  transform: scale(1.35);
+}
+
+/* ---------- Pied de page ---------- */
+
+.footer {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 36px 32px 48px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.footer a {
+  color: var(--muted);
+}
+
+/* ---------- Tablette et téléphone ---------- */
+
+@media (max-width: 960px) {
+  .showcase-inner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 48px;
+  }
+}
+
+@media (max-width: 640px) {
+  .nav {
+    padding: 16px;
+  }
+
+  .nav .logo,
+  .nav .logo img {
+    height: 26px;
+  }
+
+  .showcase {
+    --card-width: min(78vw, 300px);
+    padding: 72px 16px;
+  }
+
+  .showcase.is-ready .showcase-stage {
+    height: 520px;
+  }
+
+  .showcase-title {
+    font-size: 1.3rem;
+  }
+
+  .footer {
+    padding: 28px 16px 40px;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
