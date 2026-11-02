@@ -145,3 +145,24 @@ def test_unreachable_at_first_start_touches_nothing(tmp_path, keys):
     before = hosts_file.read_text()
     assert agent.sync_once().status == "unreachable"
     assert hosts_file.read_text() == before
+
+
+def test_invalid_public_key_is_refused_at_startup(tmp_path):
+    with pytest.raises(ValueError, match="clé publique invalide"):
+        AgentConfig(
+            registry_url="http://127.0.0.1:1/v1/registry",
+            public_key="registry.pub",
+            suffixes=[SUFFIX],
+            hosts_path=tmp_path / "hosts",
+            state_path=tmp_path / "state.json",
+        )
+
+
+def test_cli_relative_missing_key_file(tmp_path, monkeypatch, capsys):
+    from geniusdns.agent.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--registry-url", "http://127.0.0.1:1/v1/registry", "--public-key", "registry.pub",
+              "--suffix", SUFFIX, "--hosts-file", str(tmp_path / "h"), "--state-file", str(tmp_path / "s"), "sync"])
+    assert "introuvable" in str(exit_info.value)

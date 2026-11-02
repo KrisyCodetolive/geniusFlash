@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from geniusdns.common.protocol import normalize_suffix
+from geniusdns.common.protocol import RegistryError, check_public_key, normalize_suffix
 
 
 @dataclass
@@ -27,6 +27,10 @@ class AgentConfig:
     def __post_init__(self) -> None:
         if not self.suffixes:
             raise ValueError("au moins un suffixe autorisé est requis")
+        try:
+            check_public_key(self.public_key)
+        except RegistryError as exc:
+            raise ValueError(f"clé publique invalide ({exc}) : attendu 32 octets en base64, ou le chemin du fichier .pub") from exc
         self.suffixes = [normalize_suffix(s) for s in self.suffixes]
         self.hosts_path = Path(self.hosts_path)
         self.state_path = Path(self.state_path)

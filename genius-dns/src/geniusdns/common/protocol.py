@@ -82,6 +82,12 @@ def verify(public_key_b64: str, envelope: Any) -> dict[str, Any]:
     return payload
 
 
+def check_public_key(public_key_b64: str) -> None:
+    """Lève RegistryError si la clé n'est pas une clé Ed25519 (32 octets) en base64."""
+    if len(_b64decode(public_key_b64)) != 32:
+        raise RegistryError("longueur incorrecte")
+
+
 def normalize_name(name: str) -> str:
     """Nom en minuscules, sans point final ; au moins deux labels DNS valides."""
     if not isinstance(name, str):

@@ -56,6 +56,9 @@ def _make_config(args: argparse.Namespace) -> AgentConfig:
     key = args.public_key
     if os.path.isfile(key):
         key = Path(key).read_text(encoding="utf-8").strip()
+    elif os.sep in key or key.endswith(".pub"):
+        # Un chemin relatif est résolu depuis le dossier courant, pas depuis celui de l'exécutable.
+        raise SystemExit(f"clé publique introuvable : {key} (dossier courant : {os.getcwd()}). Utilisez un chemin absolu.")
     return AgentConfig(
         registry_url=args.registry_url,
         public_key=key,

@@ -83,7 +83,7 @@ class Agent:
             self.state.entries = {}
             self.state.etag = None  # forcera un téléchargement complet au retour du registre
             self.state.save(self.config.state_path)
-            return SyncResult("expired", f"registre injoignable depuis {int(age)} s : {reason}")
+            return SyncResult("expired", f"registre {'refusé' if status == 'rejected' else 'injoignable'} depuis {int(age)} s : {reason}")
         return SyncResult(status, reason, len(self.state.entries))
 
     def _fetch(self) -> tuple[dict | None, str | None]:
