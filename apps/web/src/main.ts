@@ -134,9 +134,9 @@ app.innerHTML = `
       <div class="radar-head">
         <div>
           <h2 id="radar-title">Appareils à proximité</h2>
-          <p class="radar-status" id="transfer-status" role="status" aria-live="polite">Prêt pour un transfert</p>
+          <p class="radar-status" id="transfer-status" role="status" aria-live="polite">Recherche d’appareils…</p>
         </div>
-        <span class="mono peer-count" id="peer-count">Recherche…</span>
+        <span class="mono device-name" id="device-name" title="Cet appareil"></span>
       </div>
       <div class="radar" id="radar">
         <div class="radar-ring ring-1" aria-hidden="true"></div>
@@ -146,7 +146,6 @@ app.innerHTML = `
         <div class="radar-pulse delayed" aria-hidden="true"></div>
         <div class="radar-node self">
           <span class="node-circle">${platformIcon(detectedPlatform)}<span class="self-label">${isPhone ? 'Ce téléphone' : 'Ce PC'}</span></span>
-          <span class="node-status" id="self-name"></span>
         </div>
         <div class="radar-node searching" id="radar-searching" aria-hidden="true">
           <span class="node-circle">···</span>
@@ -261,9 +260,8 @@ const devicePillLabel = document.querySelector('#device-pill-label') as HTMLSpan
 const installButton = document.querySelector('#install-button') as HTMLButtonElement;
 const profileButton = document.querySelector('#profile-button') as HTMLButtonElement;
 const transferStatus = document.querySelector('#transfer-status') as HTMLParagraphElement;
-const peerCount = document.querySelector('#peer-count') as HTMLSpanElement;
+const deviceName = document.querySelector('#device-name') as HTMLSpanElement;
 const radar = document.querySelector('#radar') as HTMLDivElement;
-const selfName = document.querySelector('#self-name') as HTMLSpanElement;
 const radarHint = document.querySelector('#radar-hint') as HTMLDivElement;
 const qrButton = document.querySelector('#qr-button') as HTMLButtonElement;
 const radarQrButton = document.querySelector('#radar-qr-button') as HTMLButtonElement;
@@ -309,6 +307,9 @@ const chatBadge = document.querySelector('#chat-badge') as HTMLSpanElement;
 
 const mobileLayout = window.matchMedia('(max-width: 899px)');
 let transferStatusTimeout: number | undefined;
+// Hors transfert, la ligne d’état affiche le nombre d’appareils connectés.
+let peerCountLabel = 'Recherche d’appareils…';
+let transferStatusActive = false;
 let vapidPublicKey: string | null = null;
 let replacedByAnotherTab = false;
 const offlineRequestWaiters = new Map<string, { peerId: string; resolve: (accepted: boolean) => void; timeoutId: number }>();
@@ -355,15 +356,19 @@ function updateServerStatus(status: string, state: 'connected' | 'connecting' | 
 }
 
 function updateTransferStatus(status: string) {
+  window.clearTimeout(transferStatusTimeout);
+  transferStatusActive = true;
   transferStatus.textContent = status;
+}
+
+function showPeerCountStatus() {
+  transferStatusActive = false;
+  transferStatus.textContent = peerCountLabel;
 }
 
 function showTemporaryTransferStatus(status: string, durationInMilliseconds: number) {
   updateTransferStatus(status);
-  window.clearTimeout(transferStatusTimeout);
-  transferStatusTimeout = window.setTimeout(() => {
-    updateTransferStatus('Prêt pour un transfert');
-  }, durationInMilliseconds);
+  transferStatusTimeout = window.setTimeout(showPeerCountStatus, durationInMilliseconds);
 }
 
 type ToastOptions = { title?: string; message: string; tone?: 'info' | 'success' | 'error'; action?: { label: string; onClick: () => void } };
@@ -420,7 +425,7 @@ function showToast({ title, message, tone = 'info', action }: ToastOptions) {
 
 function renderDeviceIdentity() {
   devicePillLabel.textContent = `${peerState.deviceName} · ${platformLabel[detectedPlatform] || 'Inconnu'}`;
-  selfName.textContent = peerState.deviceName;
+  deviceName.textContent = peerState.deviceName;
 }
 
 /* ---------- Téléchargements ---------- */
@@ -794,9 +799,10 @@ function renderRadar() {
 
   // Plus il y a d’appareils, plus les bulles sont compactes (voir .radar[data-density]).
   radar.dataset.density = radarDensity(peers.length);
-  peerCount.textContent = peers.length === 0
+  peerCountLabel = peers.length === 0
     ? 'Recherche d’appareils…'
     : `${peers.length} appareil${peers.length > 1 ? 's' : ''} connecté${peers.length > 1 ? 's' : ''}`;
+  if (!transferStatusActive) showPeerCountStatus();
   chat.setPresence(peers.length + 1);
 
   // Le QR code n’apparaît que sur demande : le radar vide propose seulement de l’afficher.
@@ -1112,7 +1118,8 @@ function createManager(socket: Socket) {
     sendSignal: (type, payload, to) => {
       socket.emit('signal:message', { type, payload, from: peerState.id, to });
     },
-    onStatusChange: (status) => updateTransferStatus(status),
+    // Un état en cours (« Envoi de… ») reste affiché ; un état final laisse revenir le compteur.
+    onStatusChange: (status) => status.endsWith('…') ? updateTransferStatus(status) : showTemporaryTransferStatus(status, 5_000),
     onPeerStateChange: () => renderRadar(),
     isPeerOnline: (peerId) => peerState.peers.some((peer) => peer.id === peerId),
     onTransferRequest: (peerId, transfer) => showTransferRequest(peerId, transfer),
