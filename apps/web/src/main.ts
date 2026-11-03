@@ -60,11 +60,14 @@ function detectPlatform(): Peer['platform'] {
 
 // Un nom unique par défaut évite d’avoir plusieurs appareils appelés simplement « Windows ».
 function generateDeviceName() {
-  const animals = ['Renard', 'Panda', 'Hibou', 'Loutre', 'Lynx', 'Koala', 'Dauphin', 'Faucon', 'Castor', 'Pingouin', 'Zèbre', 'Tigre'];
-  const colors = ['orange', 'turquoise', 'corail', 'indigo', 'émeraude', 'cerise', 'lavande', 'ambre', 'saphir', 'olive', 'ivoire', 'prune'];
+  const words = ['Pixel', 'Byte', 'Nano', 'Laser', 'Quartz', 'Photon', 'Kernel', 'Vector', 'Turbo', 'Sonar', 'Radar', 'Proxy', 'Circuit', 'Neutron', 'Cyber', 'Fibre', 'Quantum', 'Drone', 'Robot', 'Cache'];
+  const suffixes = ['Neo', 'Pro', 'Max', 'One', 'Alpha', 'Beta', 'Delta', 'Sigma', 'Prime', 'Ultra', 'Zéro', 'X'];
   const pick = (values: string[]) => values[Math.floor(Math.random() * values.length)];
-  return `${pick(animals)} ${pick(colors)}`;
+  return `${pick(words)} ${pick(suffixes)}`;
 }
+
+// Anciens noms par défaut (« Panda ivoire »…) : un appareil qui ne l’a jamais changé reçoit un nouveau nom.
+const legacyDefaultName = /^(Renard|Panda|Hibou|Loutre|Lynx|Koala|Dauphin|Faucon|Castor|Pingouin|Zèbre|Tigre) (orange|turquoise|corail|indigo|émeraude|cerise|lavande|ambre|saphir|olive|ivoire|prune)$/;
 
 // Le nom choisi reste sur cet appareil pour éviter de le ressaisir à chaque visite.
 const detectedPlatform = detectPlatform();
@@ -72,7 +75,8 @@ const isPhone = detectedPlatform === 'android' || detectedPlatform === 'ios';
 const deviceNameStorageKey = 'geniussend-device-name';
 // L’option « Masquer cet appareil » a été retirée : un appareil masqué auparavant redevient visible.
 localStorage.removeItem('geniussend-hidden');
-const defaultDeviceName = localStorage.getItem(deviceNameStorageKey) || generateDeviceName();
+const storedDeviceName = localStorage.getItem(deviceNameStorageKey);
+const defaultDeviceName = storedDeviceName && !legacyDefaultName.test(storedDeviceName) ? storedDeviceName : generateDeviceName();
 localStorage.setItem(deviceNameStorageKey, defaultDeviceName);
 const deviceIdStorageKey = 'geniussend-device-id';
 function createDeviceId() {
