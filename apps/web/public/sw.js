@@ -1,5 +1,5 @@
 // Changer ce nom à chaque évolution de l’interface force les appareils installés à se mettre à jour.
-const CACHE_NAME = 'geniussend-shell-v5';
+const CACHE_NAME = 'geniussend-shell-v6';
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
