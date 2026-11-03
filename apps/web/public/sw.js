@@ -1,5 +1,5 @@
 // Changer ce nom à chaque évolution de l’interface force les appareils installés à se mettre à jour.
-const CACHE_NAME = 'geniussend-shell-v6';
+const CACHE_NAME = 'geniussend-shell-v7';
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -65,13 +65,13 @@ self.addEventListener('push', (event) => {
   try {
     payload = event.data ? event.data.json() : {};
   } catch {
-    payload = { title: 'GeniusSend', body: 'Une nouvelle demande de transfert est disponible.' };
+    payload = { title: 'GeniusSend', body: 'Un fichier vous attend.' };
   }
 
-  const title = payload.title || 'Demande de transfert GeniusSend';
+  const title = payload.title || 'Fichier entrant GeniusSend';
   const body = payload.fileName
-    ? `${payload.senderName || 'Un appareil'} souhaite envoyer ${payload.fileName}. Ouvrez GeniusSend pour répondre.`
-    : payload.body || 'Ouvrez GeniusSend pour consulter la demande.';
+    ? `${payload.senderName || 'Un appareil'} vous envoie ${payload.fileName}. Ouvrez GeniusSend pour le recevoir.`
+    : payload.body || 'Ouvrez GeniusSend pour recevoir le fichier.';
 
   event.waitUntil(self.registration.showNotification(title, {
     body,

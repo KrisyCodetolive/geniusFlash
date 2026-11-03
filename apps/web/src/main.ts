@@ -5,6 +5,7 @@ import { createChat } from './chat';
 import { formatBytes, formatTime } from './format';
 import { icon, platformIcon } from './icons';
 import { isIosDevice, setupInstall } from './install';
+import { deleteReceivedFile, loadReceivedFiles, saveReceivedFile } from './received-store';
 import { PeerConnectionManager, type TransferProgress, type TransferResult } from './webrtc';
 
 type Peer = {
@@ -136,7 +137,7 @@ app.innerHTML = `
           <h2 id="radar-title">Appareils à proximité</h2>
           <p class="radar-status" id="transfer-status" role="status" aria-live="polite">Recherche d’appareils…</p>
         </div>
-        <span class="mono device-name" id="device-name" title="Cet appareil"></span>
+        <span class="mono device-name" id="self-device-name" title="Cet appareil"></span>
       </div>
       <div class="radar" id="radar">
         <div class="radar-ring ring-1" aria-hidden="true"></div>
@@ -195,26 +196,18 @@ app.innerHTML = `
     </aside>
   </main>
 
-  <dialog class="modal request-dialog" id="request-dialog" aria-labelledby="request-title">
-    <div class="request-hero">
-      <span class="request-icon">${icon('download')}</span>
-      <div>
-        <p class="eyebrow" id="request-kind">Fichier entrant</p>
-        <h2 id="request-title"></h2>
+  <dialog class="modal viewer-dialog" id="viewer-dialog" aria-labelledby="viewer-title">
+    <div class="modal-head">
+      <div class="viewer-heading">
+        <h2 id="viewer-title"></h2>
+        <small id="viewer-meta"></small>
       </div>
+      <button class="icon-button small" type="button" aria-label="Fermer" data-close>${icon('close')}</button>
     </div>
-    <div class="request-file">
-      <span class="request-file-icon" id="request-file-icon">${icon('file')}</span>
-      <div>
-        <strong id="request-file-name"></strong>
-        <small id="request-file-size"></small>
-      </div>
-    </div>
-    <p class="request-countdown" id="request-countdown"></p>
-    <p class="field-help" id="request-queue" hidden></p>
+    <div class="viewer-body" id="viewer-body"></div>
     <div class="dialog-actions">
-      <button class="secondary-button" id="reject-transfer" type="button">Refuser</button>
-      <button class="primary-button" id="accept-transfer" type="button">${icon('check')}Accepter</button>
+      <button class="secondary-button" id="viewer-delete" type="button">Supprimer</button>
+      <button class="primary-button" id="viewer-download" type="button">${icon('download')}Télécharger</button>
     </div>
   </dialog>
 
@@ -230,7 +223,7 @@ app.innerHTML = `
       <input id="system-name" type="text" readonly />
       <div id="push-section" hidden>
         <button class="secondary-button" id="push-button" type="button" disabled>Notifications indisponibles</button>
-        <p class="field-help" id="push-status">Les notifications signalent les demandes quand cet appareil est hors ligne.</p>
+        <p class="field-help" id="push-status">Les notifications signalent les fichiers entrants quand cet appareil est hors ligne.</p>
       </div>
     </div>
     <div class="dialog-actions">
@@ -260,7 +253,7 @@ const devicePillLabel = document.querySelector('#device-pill-label') as HTMLSpan
 const installButton = document.querySelector('#install-button') as HTMLButtonElement;
 const profileButton = document.querySelector('#profile-button') as HTMLButtonElement;
 const transferStatus = document.querySelector('#transfer-status') as HTMLParagraphElement;
-const deviceName = document.querySelector('#device-name') as HTMLSpanElement;
+const deviceName = document.querySelector('#self-device-name') as HTMLSpanElement;
 const radar = document.querySelector('#radar') as HTMLDivElement;
 const radarHint = document.querySelector('#radar-hint') as HTMLDivElement;
 const qrButton = document.querySelector('#qr-button') as HTMLButtonElement;
@@ -284,14 +277,12 @@ const sendLabel = document.querySelector('#send-label') as HTMLSpanElement;
 const recentList = document.querySelector('#recent-list') as HTMLUListElement;
 const recentPanel = document.querySelector('#recent-panel') as HTMLElement;
 const clearHistoryBtn = document.querySelector('#clear-history') as HTMLButtonElement;
-const requestDialog = document.querySelector('#request-dialog') as HTMLDialogElement;
-const requestTitle = document.querySelector('#request-title') as HTMLHeadingElement;
-const requestFileName = document.querySelector('#request-file-name') as HTMLElement;
-const requestFileSize = document.querySelector('#request-file-size') as HTMLElement;
-const requestCountdown = document.querySelector('#request-countdown') as HTMLParagraphElement;
-const requestQueueInfo = document.querySelector('#request-queue') as HTMLParagraphElement;
-const acceptTransferBtn = document.querySelector('#accept-transfer') as HTMLButtonElement;
-const rejectTransferBtn = document.querySelector('#reject-transfer') as HTMLButtonElement;
+const viewerDialog = document.querySelector('#viewer-dialog') as HTMLDialogElement;
+const viewerTitle = document.querySelector('#viewer-title') as HTMLHeadingElement;
+const viewerMeta = document.querySelector('#viewer-meta') as HTMLElement;
+const viewerBody = document.querySelector('#viewer-body') as HTMLDivElement;
+const viewerDeleteBtn = document.querySelector('#viewer-delete') as HTMLButtonElement;
+const viewerDownloadBtn = document.querySelector('#viewer-download') as HTMLButtonElement;
 const profileDialog = document.querySelector('#profile-dialog') as HTMLDialogElement;
 const deviceNameInput = document.querySelector('#device-name') as HTMLInputElement;
 const systemNameInput = document.querySelector('#system-name') as HTMLInputElement;
@@ -465,6 +456,8 @@ type TransferEntry = {
   fileSize?: number;
   mimeType?: string;
   url?: string;
+  // Nom de l’expéditeur mémorisé avec le fichier : il peut ne plus être en ligne au prochain chargement.
+  peerName?: string;
   bytes: number;
   startedAt: number;
   lastRenderAt: number;
@@ -518,7 +511,7 @@ function entrySideLabel(entry: TransferEntry) {
 }
 
 function entrySubLabel(entry: TransferEntry) {
-  const peerName = getPeerDisplayName(entry.peerId);
+  const peerName = entry.peerName ?? getPeerDisplayName(entry.peerId);
   const route = entry.direction === 'sent' ? `Vers ${peerName}` : `De ${peerName}`;
 
   switch (entry.state) {
@@ -621,6 +614,20 @@ function renderEntry(entry: TransferEntry) {
 
   item.append(visual, main, actions);
 
+  if (isViewable(entry)) {
+    item.classList.add('openable');
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.setAttribute('aria-label', `Ouvrir ${entry.fileName ?? 'le fichier'}`);
+    item.addEventListener('click', () => openViewer(entry.id));
+    item.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openViewer(entry.id);
+      }
+    });
+  }
+
   if (refs) {
     refs.item.replaceWith(item);
   } else {
@@ -640,12 +647,19 @@ function clearHistory() {
   for (const entry of Array.from(entries.values())) {
     // Les transferts encore en cours restent visibles.
     if (!finishedStates.includes(entry.state)) continue;
-    if (entry.url) URL.revokeObjectURL(entry.url);
-    entryElements.get(entry.id)?.item.remove();
-    entryElements.delete(entry.id);
-    entries.delete(entry.id);
+    removeEntry(entry);
   }
   refreshRecentChrome();
+}
+
+function removeEntry(entry: TransferEntry) {
+  if (entry.url) URL.revokeObjectURL(entry.url);
+  if (entry.direction === 'received' && entry.state === 'done') {
+    void deleteReceivedFile(entry.id).catch((error) => console.warn('[GeniusSend] Suppression du fichier conservé impossible:', error));
+  }
+  entryElements.get(entry.id)?.item.remove();
+  entryElements.delete(entry.id);
+  entries.delete(entry.id);
 }
 
 function cancelEntry(entry: TransferEntry) {
@@ -668,7 +682,6 @@ window.setInterval(() => {
       if (refs?.sub) refs.sub.textContent = entrySubLabel(entry);
     }
   }
-  renderRequestCountdown();
 }, 1_000);
 
 /* ---------- Radar ---------- */
@@ -977,76 +990,145 @@ function adoptTransferId(transferId: string) {
   job.entryId = transferId;
 }
 
-/* ---------- Demandes reçues ---------- */
+/* ---------- Fichiers entrants ---------- */
 
 type TransferRequestInfo = { transferId: string; fileName: string; fileSize: number; expiresInMs: number; mimeType?: string; senderName?: string; expiresAt?: number };
-type PendingRequest = { peerId: string; transfer: TransferRequestInfo; offline: boolean; expiresAt: number };
-const requestQueue: PendingRequest[] = [];
-let activeRequest: PendingRequest | null = null;
 
-function renderRequestCountdown() {
-  if (activeRequest) {
-    requestCountdown.textContent = `Temps restant pour répondre : ${formatCountdown(activeRequest.expiresAt - Date.now())}`;
-  }
-}
-
-function renderNextTransferRequest() {
-  activeRequest ??= requestQueue.shift() ?? null;
-  if (!activeRequest) {
-    if (requestDialog.open) requestDialog.close();
-    return;
-  }
-
-  const { peerId, transfer } = activeRequest;
-  requestTitle.textContent = `${transfer.senderName || getPeerDisplayName(peerId)} veut vous envoyer un fichier`;
-  requestFileName.textContent = transfer.fileName;
-  requestFileSize.textContent = formatBytes(transfer.fileSize);
-  requestQueueInfo.hidden = requestQueue.length === 0;
-  requestQueueInfo.textContent = `${requestQueue.length} autre${requestQueue.length > 1 ? 's' : ''} demande${requestQueue.length > 1 ? 's' : ''} en attente`;
-  renderRequestCountdown();
-  if (!requestDialog.open) requestDialog.showModal();
-}
-
-function showTransferRequest(peerId: string, transfer: TransferRequestInfo, offline = false) {
-  if (activeRequest?.transfer.transferId === transfer.transferId || requestQueue.some((entry) => entry.transfer.transferId === transfer.transferId)) return;
-  const expiresAt = transfer.expiresAt ?? Date.now() + transfer.expiresInMs;
-  requestQueue.push({ peerId, transfer, offline, expiresAt });
-  renderNextTransferRequest();
-}
-
-function removeTransferRequest(transferId: string) {
-  const index = requestQueue.findIndex((entry) => entry.transfer.transferId === transferId);
-  if (index >= 0) requestQueue.splice(index, 1);
-  const wasActive = activeRequest?.transfer.transferId === transferId;
-  if (wasActive) {
-    activeRequest = null;
-    renderNextTransferRequest();
-  }
-  return wasActive || index >= 0;
-}
-
-function answerRequest(accepted: boolean) {
-  const request = activeRequest;
-  if (!request) return;
-  const { peerId, transfer, offline } = request;
-  activeRequest = null;
-
-  if (accepted) {
-    // La ligne existe avant le premier événement de progression.
-    upsertEntry({ id: transfer.transferId, kind: 'file', direction: 'received', peerId, fileName: transfer.fileName, fileSize: transfer.fileSize, state: offline ? 'waiting' : 'active' });
-  }
+/** Les fichiers entrants sont acceptés d’office : ils arrivent dans « Transferts récents » sans confirmation. */
+function acceptIncomingTransfer(peerId: string, transfer: TransferRequestInfo, offline = false) {
+  if (entries.has(transfer.transferId)) return;
+  // La ligne existe avant le premier événement de progression.
+  upsertEntry({ id: transfer.transferId, kind: 'file', direction: 'received', peerId, fileName: transfer.fileName, fileSize: transfer.fileSize, state: offline ? 'waiting' : 'active' });
 
   if (offline) {
-    if (accepted) peerState.manager?.approveOfflineTransfer(peerId, transfer.transferId);
-    peerState.socket?.emit('transfer:offline:decision', { transferId: transfer.transferId, accepted });
-  } else if (accepted) {
-    peerState.manager?.acceptTransfer(peerId, transfer.transferId);
+    peerState.manager?.approveOfflineTransfer(peerId, transfer.transferId);
+    peerState.socket?.emit('transfer:offline:decision', { transferId: transfer.transferId, accepted: true });
   } else {
-    peerState.manager?.rejectTransfer(peerId, transfer.transferId);
+    peerState.manager?.acceptTransfer(peerId, transfer.transferId);
   }
+}
 
-  if (!accepted) showTemporaryTransferStatus('Transfert refusé', 5_000);
-  renderNextTransferRequest();
+/* ---------- Lecteur des fichiers reçus ---------- */
+
+// Le navigateur ne donne pas toujours un type aux fichiers texte : l’extension sert de repli.
+const textExtensions = /\.(txt|md|csv|tsv|json|log|xml|ya?ml|ini|conf|html?|css|js|ts|py|java|c|cpp|h|sh|sql)$/i;
+// Au-delà, un fichier texte figerait la page : seul le début est affiché.
+const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
+let viewerEntryId: string | null = null;
+
+function isViewable(entry: TransferEntry) {
+  return entry.direction === 'received' && entry.state === 'done' && Boolean(entry.url);
+}
+
+function viewerKind(entry: TransferEntry) {
+  const type = entry.mimeType ?? '';
+  if (type.startsWith('image/')) return 'image';
+  if (type.startsWith('video/')) return 'video';
+  if (type.startsWith('audio/')) return 'audio';
+  if (type === 'application/pdf') return 'pdf';
+  if (type.startsWith('text/') || type === 'application/json' || textExtensions.test(entry.fileName ?? '')) return 'text';
+  return 'other';
+}
+
+function renderViewerFallback(message: string) {
+  const fallback = document.createElement('div');
+  fallback.className = 'viewer-fallback';
+  fallback.innerHTML = icon('file');
+  const text = document.createElement('p');
+  text.textContent = message;
+  fallback.append(text);
+  viewerBody.append(fallback);
+}
+
+async function renderViewerBody(entry: TransferEntry) {
+  const url = entry.url as string;
+  const kind = viewerKind(entry);
+
+  if (kind === 'image') {
+    const image = document.createElement('img');
+    image.src = url;
+    image.alt = entry.fileName ?? '';
+    viewerBody.append(image);
+  } else if (kind === 'video' || kind === 'audio') {
+    const media = document.createElement(kind);
+    media.src = url;
+    media.controls = true;
+    media.preload = 'metadata';
+    media.addEventListener('error', () => {
+      media.remove();
+      renderViewerFallback('Ce format ne peut pas être lu sur cet appareil. Téléchargez-le pour l’ouvrir.');
+    });
+    viewerBody.append(media);
+  } else if (kind === 'pdf' && navigator.pdfViewerEnabled) {
+    const frame = document.createElement('iframe');
+    frame.src = url;
+    frame.title = entry.fileName ?? 'PDF';
+    viewerBody.append(frame);
+  } else if (kind === 'pdf') {
+    renderViewerFallback('Ce navigateur ne sait pas afficher les PDF. Téléchargez-le pour l’ouvrir.');
+  } else if (kind === 'text') {
+    const blob = await (await fetch(url)).blob();
+    if (viewerEntryId !== entry.id) return;
+    const pre = document.createElement('pre');
+    pre.className = 'viewer-text';
+    pre.textContent = await blob.slice(0, MAX_TEXT_PREVIEW_BYTES).text();
+    viewerBody.append(pre);
+    if (blob.size > MAX_TEXT_PREVIEW_BYTES) {
+      renderViewerFallback('Seul le début du fichier est affiché. Téléchargez-le pour le lire en entier.');
+    }
+  } else {
+    renderViewerFallback('Aperçu indisponible pour ce type de fichier. Téléchargez-le pour l’ouvrir.');
+  }
+}
+
+function openViewer(entryId: string) {
+  const entry = entries.get(entryId);
+  if (!entry || !isViewable(entry)) return;
+  viewerEntryId = entry.id;
+  viewerTitle.textContent = entry.fileName ?? '';
+  viewerMeta.textContent = entrySubLabel(entry);
+  viewerBody.replaceChildren();
+  viewerBody.dataset.kind = viewerKind(entry);
+  void renderViewerBody(entry).catch(() => renderViewerFallback('Impossible d’afficher ce fichier.'));
+  if (!viewerDialog.open) viewerDialog.showModal();
+}
+
+// Fermer le lecteur coupe la lecture en cours et libère le contenu affiché.
+viewerDialog.addEventListener('close', () => {
+  viewerEntryId = null;
+  viewerBody.replaceChildren();
+});
+
+viewerDownloadBtn.addEventListener('click', () => {
+  const entry = viewerEntryId ? entries.get(viewerEntryId) : undefined;
+  if (entry?.url) downloadUrl(entry.url, entry.fileName ?? 'fichier');
+});
+
+viewerDeleteBtn.addEventListener('click', () => {
+  const entry = viewerEntryId ? entries.get(viewerEntryId) : undefined;
+  viewerDialog.close();
+  if (!entry) return;
+  removeEntry(entry);
+  refreshRecentChrome();
+});
+
+/** Les fichiers reçus lors des visites précédentes reviennent dans « Transferts récents ». */
+async function restoreReceivedFiles() {
+  for (const file of await loadReceivedFiles()) {
+    upsertEntry({
+      id: file.id,
+      kind: 'file',
+      direction: 'received',
+      peerId: file.peerId,
+      peerName: file.peerName,
+      fileName: file.fileName,
+      fileSize: file.blob.size,
+      mimeType: file.mimeType,
+      url: URL.createObjectURL(file.blob),
+      state: 'done',
+      time: new Date(file.time)
+    });
+  }
 }
 
 /* ---------- Événements du gestionnaire WebRTC ---------- */
@@ -1078,9 +1160,15 @@ function handleTransferProgress(progress: TransferProgress) {
 
 function handleTransferComplete(result: TransferResult) {
   if (result.direction === 'receiving' && result.ok && result.file) {
-    // L’URL reste valide pour le bouton « Enregistrer », jusqu’à « Tout effacer ».
+    // Le fichier reste dans l’application : il ne part dans les téléchargements que sur demande.
     const url = URL.createObjectURL(result.file);
-    downloadUrl(url, result.fileName);
+    const time = new Date();
+    const peerName = getPeerDisplayName(result.peerId);
+    void saveReceivedFile({ id: result.transferId, peerId: result.peerId, peerName, fileName: result.fileName, mimeType: result.file.type, time: time.getTime(), blob: result.file })
+      .catch((error) => {
+        console.warn('[GeniusSend] Conservation du fichier reçu impossible:', error);
+        showToast({ title: result.fileName, message: 'Pas assez de place pour le conserver : téléchargez-le avant de quitter la page.', tone: 'error' });
+      });
     upsertEntry({
       id: result.transferId,
       kind: 'file',
@@ -1090,8 +1178,9 @@ function handleTransferComplete(result: TransferResult) {
       fileSize: result.file.size,
       mimeType: result.file.type,
       url,
+      peerName,
       state: 'done',
-      time: new Date()
+      time
     });
     return;
   }
@@ -1122,7 +1211,7 @@ function createManager(socket: Socket) {
     onStatusChange: (status) => status.endsWith('…') ? updateTransferStatus(status) : showTemporaryTransferStatus(status, 5_000),
     onPeerStateChange: () => renderRadar(),
     isPeerOnline: (peerId) => peerState.peers.some((peer) => peer.id === peerId),
-    onTransferRequest: (peerId, transfer) => showTransferRequest(peerId, transfer),
+    onTransferRequest: (peerId, transfer) => acceptIncomingTransfer(peerId, transfer),
     onTransferPending: ({ peerId, transferId, expiresInMs }) => {
       adoptTransferId(transferId);
       const job = queueState.current;
@@ -1138,16 +1227,12 @@ function createManager(socket: Socket) {
       });
     },
     onTransferExpired: (peerId, transferId) => {
-      if (removeTransferRequest(transferId)) {
-        showTemporaryTransferStatus('Une demande de transfert a expiré', 5_000);
-      }
       updateEntry(transferId, { state: 'expired', reason: 'pas de réponse à temps' });
     },
     onTransferProgress: handleTransferProgress,
     onTransferComplete: handleTransferComplete,
     onTransferCancelled: (peerId, transferId) => {
       if (transferId) {
-        removeTransferRequest(transferId);
         updateEntry(transferId, { state: 'cancelled' });
       }
       showTemporaryTransferStatus('Transfert annulé', 5_000);
@@ -1262,8 +1347,11 @@ function createClientSocket() {
 
   socket.on('transfer:offline:request', (request: TransferRequestInfo & { from: string }) => {
     const expiresInMs = Math.max(0, (request.expiresAt ?? Date.now()) - Date.now());
-    showTransferRequest(request.from, { ...request, expiresInMs }, true);
-    if (expiresInMs === 0) socket.emit('transfer:offline:decision', { transferId: request.transferId, accepted: false });
+    if (expiresInMs === 0) {
+      socket.emit('transfer:offline:decision', { transferId: request.transferId, accepted: false });
+      return;
+    }
+    acceptIncomingTransfer(request.from, { ...request, expiresInMs }, true);
   });
 
   socket.on('transfer:offline:decision', ({ transferId, accepted }: { transferId: string; accepted: boolean }) => {
@@ -1285,12 +1373,11 @@ function createClientSocket() {
       offlineRequestWaiters.delete(transferId);
       waiter.resolve(false);
     }
-    removeTransferRequest(transferId);
     if (reason === 'sender-disconnected') showTemporaryTransferStatus('L’expéditeur s’est déconnecté : demande annulée', 5_000);
   });
 
   socket.on('transfer:offline:cancelled', ({ transferId }: { transferId: string }) => {
-    removeTransferRequest(transferId);
+    updateEntry(transferId, { state: 'cancelled' });
   });
 
   socket.on('transfer:offline:error', ({ transferId, message }: { transferId: string; message: string }) => {
@@ -1343,7 +1430,7 @@ sendButton.addEventListener('click', sendSelection);
 closeSheetBtn.addEventListener('click', closeSheet);
 sheetBackdrop.addEventListener('click', closeSheet);
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && sendSheet.dataset.open === 'true' && !requestDialog.open && !profileDialog.open && !qrDialog.open) {
+  if (event.key === 'Escape' && sendSheet.dataset.open === 'true' && !viewerDialog.open && !profileDialog.open && !qrDialog.open) {
     closeSheet();
   }
 });
@@ -1423,10 +1510,6 @@ document.addEventListener('paste', (event) => {
 });
 
 clearHistoryBtn.addEventListener('click', clearHistory);
-acceptTransferBtn.addEventListener('click', () => answerRequest(true));
-rejectTransferBtn.addEventListener('click', () => answerRequest(false));
-// Échap ne doit pas faire disparaître une demande sans réponse.
-requestDialog.addEventListener('cancel', (event) => event.preventDefault());
 
 /* ---------- Profil ---------- */
 
@@ -1446,8 +1529,8 @@ function openQrDialog() {
 qrButton.addEventListener('click', openQrDialog);
 radarQrButton.addEventListener('click', openQrDialog);
 
-// Un clic sur le fond ou sur ✕ ferme le profil et la fenêtre du QR code.
-for (const dialog of [profileDialog, qrDialog]) {
+// Un clic sur le fond ou sur ✕ ferme le profil, la fenêtre du QR code et le lecteur.
+for (const dialog of [profileDialog, qrDialog, viewerDialog]) {
   dialog.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
     if (target === dialog || target.closest('[data-close]')) {
@@ -1533,5 +1616,6 @@ mobileLayout.addEventListener('change', () => {
 });
 
 renderDeviceIdentity();
+void restoreReceivedFiles().catch((error) => console.warn('[GeniusSend] Fichiers reçus indisponibles:', error));
 peerState.socket = createClientSocket();
 renderRadar();
